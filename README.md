@@ -73,6 +73,7 @@ python download_datasets.py --dataset commonvoice --lang en --hf_token $HUGGINGF
 python download_datasets.py --dataset gtzan --hf_token $HUGGINGFACE_HUB_TOKEN                     # Western genres
 python download_datasets.py --dataset carnatic                                                    # South Indian classical
 python download_datasets.py --dataset turkish_makam                                               # Turkish classical
+python download_datasets.py --dataset fma                                                         # 8 balanced genres
 
 # Download acoustic scene data  
 python download_datasets.py --dataset tau_urban                 # Urban acoustic scenes
@@ -93,9 +94,6 @@ python download_datasets.py --list
 ### Speech Recognition (CommonVoice 17.0)
 - **Tonal Languages (5):** Vietnamese (vi), Thai (th), Mandarin (zh-CN), Punjabi (pa-IN), Cantonese (yue)
 - **Non-Tonal Languages (6):** English (en), Spanish (es), German (de), French (fr), Italian (it), Dutch (nl)
-- **Tonal Languages**: Vietnamese (vi), Thai (th), Mandarin (zh-CN), Punjabi (pa-IN), Cantonese (yue), etc.
-- **Non-Tonal Languages**: English (en), Spanish (es), German (de), French (fr), Italian (it), Dutch (nl), etc.  
-- **Total**: 205+ languages available, focusing on 18 key languages for bias analysis
 
 ### Music Analysis
 - **Western Traditions**: GTZAN (10 genres), FMA-small (8 genres)  
