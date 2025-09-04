@@ -1,39 +1,24 @@
-# Core dependencies
-torch>=1.12.0
-torchaudio>=0.12.0
-numpy>=1.21.0
-scipy>=1.7.0
-pandas>=1.3.0
-scikit-learn>=1.0.0
-
-# Data handling
-datasets>=2.12.0  # For Hugging Face datasets (CommonVoice)
-huggingface-hub>=0.15.0  # For HF authentication
-requests>=2.28.0  # For downloading from Zenodo API
-kaggle>=1.5.0     # For Kaggle datasets (Hindustani, Carnatic)
+# Core dependencies for dataset downloading
+datasets>=2.12.0         # Hugging Face datasets (CommonVoice, GTZAN)
+huggingface-hub>=0.15.0  # HF authentication and access
+requests>=2.28.0         # Direct downloads (Zenodo, FMA)
+kaggle>=1.5.0            # Kaggle datasets (Carnatic, Hindustani)
 
 # Audio processing
-librosa>=0.9.0
-soundfile>=0.10.0
-resampy>=0.3.0
+soundfile>=0.12.1        # Audio I/O (required for CommonVoice, GTZAN)
+librosa>=0.10.0          # Audio processing utilities
+torchaudio>=0.12.0       # PyTorch audio (dataset loading)
 
-# Deep learning utilities
-pytorch-lightning>=1.7.0
-hydra-core>=1.2.0
-omegaconf>=2.2.0
+# Data handling
+pandas>=1.4.0            # Metadata management
+numpy>=1.21.0            # Numerical operations
 
-# Evaluation and metrics
-matplotlib>=3.5.0
-seaborn>=0.11.0
-plotly>=5.0.0
-wandb>=0.12.0
+# System utilities
+pathlib                  # Path handling (built-in Python 3.4+)
+zipfile                  # Archive extraction (built-in)
+tarfile                  # Archive extraction (built-in)
 
-# Optional: For advanced features
-nnAudio>=0.3.0  # For CQT implementation
-kapre>=0.3.0    # Alternative audio preprocessing
-
-# Development
-pytest>=6.0.0
-black>=22.0.0
-isort>=5.10.0
-flake8>=4.0.0
+# Optional: Advanced audio processing (for future full implementation)
+# torch>=1.12.0          # PyTorch (when models are released)
+# scipy>=1.7.0           # Scientific computing
+# scikit-learn>=1.0.0    # Machine learning utilities

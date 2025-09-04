@@ -2,6 +2,21 @@
 
 import os
 import sys
+from pathlib import Path
+
+# Set cache directories relative to project or user home
+PROJECT_ROOT = Path(__file__).parent
+DEFAULT_CACHE_DIR = PROJECT_ROOT / "data" / "hf_cache"
+DEFAULT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+# Use environment variable if set, otherwise use project-relative cache
+HF_CACHE_BASE = os.environ.get("HF_CACHE_BASE", str(DEFAULT_CACHE_DIR))
+
+os.environ["HF_HOME"] = HF_CACHE_BASE
+os.environ["TRANSFORMERS_CACHE"] = os.path.join(HF_CACHE_BASE, "transformers")
+os.environ["HUGGINGFACE_HUB_CACHE"] = os.path.join(HF_CACHE_BASE, "hub")
+os.environ["HF_DATASETS_CACHE"] = os.path.join(HF_CACHE_BASE, "datasets")
+
 import argparse
 from pathlib import Path
 import requests
@@ -15,6 +30,10 @@ from typing import List, Dict, Optional, Tuple
 # Configuration
 DATA_DIR = Path(__file__).parent / "data"
 DATA_DIR.mkdir(exist_ok=True)
+
+# Create HF cache directory in our data folder
+HF_CACHE_DIR = DATA_DIR / "hf_cache"
+HF_CACHE_DIR.mkdir(exist_ok=True)
 
 # Available datasets and configurations
 COMMONVOICE_LANGUAGES = {
@@ -41,7 +60,7 @@ COMMONVOICE_LANGUAGES = {
     'lv': 'Latvian', 'lzz': 'Laz', 'mai': 'Maithili', 'mdf': 'Moksha', 'mg': 'Malagasy', 
     'mhr': 'Meadow Mari', 'mk': 'Macedonian', 'ml': 'Malayalam', 'mn': 'Mongolian', 'mni': 'Meetei Lon', 
     'mos': 'Mossi', 'mr': 'Marathi', 'mrj': 'Hill Mari', 'ms': 'Malay', 'mt': 'Maltese', 
-    'my': 'Burmese', 'myv': 'Erzya', 'nan-tw': 'Taiwanese (Minnan)', 'nb-NO': 'Norwegian Bokmål',
+    'my': 'Burmese', 'myv': 'Erzya', 'nan-tw': 'Taiwanese (Minnan)', 'nb-NO': 'Norwegian Bokmål', 
     'nd': 'IsiNdebele (North)', 'ne-NP': 'Nepali', 'nhe': 'Eastern Huasteca Nahuatl', 
     'nhi': 'Western Sierra Puebla Nahuatl', 'nia': 'Nias', 'nl': 'Dutch', 'nn-NO': 'Norwegian Nynorsk', 
     'nr': 'IsiNdebele (South)', 'nso': 'Northern Sotho', 'ny': 'Chinyanja', 'nyn': 'Runyankole', 
@@ -64,7 +83,7 @@ COMMONVOICE_LANGUAGES = {
 }
 
 # Tonal vs non-tonal classification for research purposes
-TONAL_LANGUAGES = ['vi', 'th', 'zh-CN', 'zh-HK', 'zh-TW', 'yue', 'nan-tw', 'pa-IN']  # Vietnamese, Thai, Chinese variants, Cantonese, Taiwanese, Punjabi
+TONAL_LANGUAGES = ['vi', 'th', 'zh-CN', 'zh-HK', 'zh-TW', 'yue', 'nan-tw', 'pa-IN']  # Vietnamese, Thai, Chinese variants, Cantonese, Punjabi
 NON_TONAL_LANGUAGES = ['en', 'es', 'de', 'fr', 'it', 'nl', 'pt', 'ru', 'pl', 'sv-SE']  # Major European languages
 
 MUSIC_DATASETS = ["gtzan", "fma", "carnatic", "turkish_makam", "hindustani", "arab_andalusian"]
@@ -113,8 +132,13 @@ def download_commonvoice_hf(lang_code: str, max_samples: int = 2000, hf_token: O
     try:
         print(f"  Loading CommonVoice 17.0 dataset for language: {lang_code}")
         
-        # Use your suggested approach - direct load_dataset call
-        dataset = load_dataset("mozilla-foundation/common_voice_17_0", lang_code, split="test")
+        # Use your suggested approach - direct load_dataset call with explicit cache_dir
+        dataset = load_dataset(
+            "mozilla-foundation/common_voice_17_0", 
+            lang_code, 
+            split="test",
+            cache_dir=str(HF_CACHE_DIR)
+        )
         
         print(f"  Processing up to {max_samples} samples...")
         
@@ -198,12 +222,16 @@ def download_commonvoice_hf(lang_code: str, max_samples: int = 2000, hf_token: O
         print(f"ERROR: Failed to download CommonVoice {lang_code}: {str(e)}")
         return False
 
-def download_gtzan():
+def download_gtzan(hf_token: Optional[str] = None):
     """Download GTZAN dataset from Hugging Face."""
     print("Downloading GTZAN music dataset from Hugging Face...")
     
     output_dir = DATA_DIR / "gtzan"
     output_dir.mkdir(exist_ok=True)
+    
+    # Setup authentication if token provided
+    if hf_token:
+        os.environ["HF_TOKEN"] = hf_token
     
     # Check authentication first
     try:
@@ -218,8 +246,8 @@ def download_gtzan():
     
     try:
         print("  Loading GTZAN dataset...")
-        # Use your specified approach
-        ds = load_dataset("confit/gtzan-parquet")
+        # Use your specified approach with explicit cache_dir
+        ds = load_dataset("confit/gtzan-parquet", cache_dir=str(HF_CACHE_DIR))
         
         # Get the train split (or first available split)
         if "train" in ds:
@@ -844,7 +872,7 @@ Examples:
     
     parser.add_argument(
         "--lang", "--language",
-        help="Language for CommonVoice dataset (e.g., english, mandarin, vietnamese)"
+        help="Language for CommonVoice dataset (e.g., en, hi, de, fr, es, zh-CN, vi, th) or 'all_target' for all tonal+non-tonal languages"
     )
     
     parser.add_argument(
@@ -862,7 +890,7 @@ Examples:
         "--max_samples", "--max-samples",
         type=int,
         default=2000,
-        help="Maximum samples to download per language (default: 2000)"
+        help="Maximum samples to download per language (default: 2000 for balanced evaluation)"
     )
     
     parser.add_argument(
@@ -886,10 +914,11 @@ def list_available_datasets():
     
     print("SPEECH DATASETS:")
     print("  commonvoice - Mozilla Common Voice multilingual speech")
-    print("    Tonal languages:", ", ".join(TONAL_LANGUAGES))
-    print("    Non-tonal languages:", ", ".join(NON_TONAL_LANGUAGES))
+    print("    Target tonal languages:", ", ".join(TONAL_LANGUAGES))
+    print("    Target non-tonal languages:", ", ".join(NON_TONAL_LANGUAGES))
     print(f"    All available languages: {len(COMMONVOICE_LANGUAGES)} total")
     print("    Use language codes (e.g., 'en' for English, 'hi' for Hindi)")
+    print("    Or use 'all_target' to download all tonal + non-tonal target languages")
     print()
     
     print("MUSIC DATASETS:")
@@ -908,6 +937,14 @@ def list_available_datasets():
     print("SCENE DATASETS:")
     print("  tau_urban - TAU Urban Acoustic Scenes 2020 dataset")
     print()
+    
+    print("EXAMPLE COMMANDS:")
+    print("  python download_datasets.py --list")
+    print("  python download_datasets.py --all --hf_token YOUR_TOKEN")
+    print("  python download_datasets.py --dataset commonvoice --lang en --hf_token YOUR_TOKEN")
+    print("  python download_datasets.py --dataset commonvoice --lang all_target --hf_token YOUR_TOKEN")
+    print("  python download_datasets.py --dataset gtzan")
+    print()
 
 def download_dataset(dataset_name: str, **kwargs) -> bool:
     """Download a specific dataset based on name."""
@@ -919,12 +956,45 @@ def download_dataset(dataset_name: str, **kwargs) -> bool:
             print("ERROR: --lang required for CommonVoice dataset")
             print(f"Available languages: {', '.join(list(COMMONVOICE_LANGUAGES.keys())[:20])}... (and {len(COMMONVOICE_LANGUAGES)-20} more)")
             print("Use language codes like: en, hi, de, fr, es, zh-CN, vi, th")
+            print("Or use 'all_target' to download all tonal and non-tonal target languages")
             return False
         
+        # Handle batch download for all target languages
+        if lang == "all_target":
+            all_target_languages = TONAL_LANGUAGES + NON_TONAL_LANGUAGES
+            print(f"Downloading CommonVoice for all target languages ({len(all_target_languages)} languages)")
+            success_count = 0
+            failed_languages = []
+            
+            for lang_code in all_target_languages:
+                print(f"\n--- Downloading CommonVoice for language: {lang_code} ---")
+                try:
+                    lang_success = download_commonvoice_hf(
+                        lang_code,
+                        max_samples=kwargs.get("max_samples", 2000),
+                        hf_token=kwargs.get("hf_token")
+                    )
+                    if lang_success:
+                        success_count += 1
+                    else:
+                        failed_languages.append(lang_code)
+                except Exception as e:
+                    print(f"Failed to download {lang_code}: {str(e)}")
+                    failed_languages.append(lang_code)
+            
+            print(f"\n=== BATCH DOWNLOAD SUMMARY ===")
+            print(f"Successfully downloaded: {success_count}/{len(all_target_languages)} languages")
+            if failed_languages:
+                print(f"Failed languages: {', '.join(failed_languages)}")
+            
+            return success_count > 0
+        
+        # Handle single language download
         if lang not in COMMONVOICE_LANGUAGES:
             print(f"ERROR: Unsupported language '{lang}'")
             print(f"Available languages: {', '.join(list(COMMONVOICE_LANGUAGES.keys())[:20])}... (and {len(COMMONVOICE_LANGUAGES)-20} more)")
             print("Use language codes like: en, hi, de, fr, es, zh-CN, vi, th")
+            print("Or use 'all_target' to download all tonal and non-tonal target languages")
             return False
         
         success = download_commonvoice_hf(
@@ -934,7 +1004,7 @@ def download_dataset(dataset_name: str, **kwargs) -> bool:
         )
     
     elif dataset_name == "gtzan":
-        success = download_gtzan()
+        success = download_gtzan(hf_token=kwargs.get("hf_token"))
     elif dataset_name == "fma":
         success = download_fma()
     elif dataset_name == "carnatic":

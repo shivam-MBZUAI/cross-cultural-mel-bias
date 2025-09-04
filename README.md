@@ -17,8 +17,8 @@ This repository provides automated tools to download and organize all datasets u
 
 ### Research Scope (Full Paper)
 
-1. **Cross-Cultural Evaluation**: Systematic study across speech (11 languages), music (8 traditions), and acoustic scenes  
-2. **Bias Quantification**: Metrics for measuring cultural bias in audio representations  
+1. **Cross-Cultural Evaluation**: Systematic study across speech (11 languages), music (8 traditions), and acoustic scenes (10 European cities)
+2. **Bias Quantification**: Metrics for measuring cultural bias in mel-scale audio representations  
 3. **Alternative Solutions**: Comparison of learnable (LEAF, SincNet) and psychoacoustic (ERB, Bark, CQT) alternatives  
 4. **Mitigation Strategies**: Practical solutions for culturally-aware audio systems  
 
@@ -37,10 +37,6 @@ This repository provides automated tools to download and organize all datasets u
 git clone https://github.com/shivam-MBZUAI/cross-cultural-mel-bias.git
 cd cross-cultural-mel-bias
 
-# Create conda environment
-conda create -n mel-bias python=3.8
-conda activate mel-bias
-
 # Install dependencies
 pip install -r requirements.txt
 ```
@@ -50,7 +46,7 @@ pip install -r requirements.txt
 Before downloading datasets, set up authentication:
 
 ```bash
-# HuggingFace (for CommonVoice datasets)
+# HuggingFace (for CommonVoice and GTZAN datasets)
 huggingface-cli login
 # OR export HUGGINGFACE_HUB_TOKEN="your_token"
 
@@ -64,50 +60,97 @@ huggingface-cli login
 Our comprehensive dataset downloader supports all research datasets:
 
 ```bash
-# Download all datasets (requires ~200GB storage)
-python download_datasets.py --all --hf_token $HUGGINGFACE_HUB_TOKEN
+# Download all target speech datasets (5 tonal + 6 non-tonal languages)
+python download_datasets.py --dataset commonvoice --lang all_target --hf_token $HUGGINGFACE_HUB_TOKEN
 
-# Download specific speech datasets  
-python download_datasets.py --dataset commonvoice --lang vi     # Vietnamese (tonal)
-python download_datasets.py --dataset commonvoice --lang en     # English (non-tonal)
+# Download specific languages
+python download_datasets.py --dataset commonvoice --lang vi --hf_token $HUGGINGFACE_HUB_TOKEN     # Vietnamese (tonal)
+python download_datasets.py --dataset commonvoice --lang en --hf_token $HUGGINGFACE_HUB_TOKEN     # English (non-tonal)
+python download_datasets.py --dataset commonvoice --lang zh-CN --hf_token $HUGGINGFACE_HUB_TOKEN  # Mandarin Chinese
 
-# Download specific music datasets
-python download_datasets.py --dataset gtzan                     # Western genres
-python download_datasets.py --dataset carnatic                  # South Indian classical
-python download_datasets.py --dataset turkish_makam             # Turkish classical
+# Download Western music datasets
+python download_datasets.py --dataset gtzan --hf_token $HUGGINGFACE_HUB_TOKEN    # GTZAN: 10 genres, 1000 tracks
+python download_datasets.py --dataset fma                                        # FMA-small: 8 genres, 8000 tracks
+
+# Download non-Western music datasets
+python download_datasets.py --dataset carnatic                                   # South Indian: 2380 recordings, 227 ragas
+python download_datasets.py --dataset hindustani                                 # North Indian: 1124 recordings, 195 ragas
+python download_datasets.py --dataset turkish_makam                              # Turkish: 6500 recordings, 155 makams
+python download_datasets.py --dataset arab_andalusian                            # Maghrebi: 338 recordings, 11 mizans
 
 # Download acoustic scene data  
-python download_datasets.py --dataset tau_urban                 # Urban acoustic scenes
+python download_datasets.py --dataset tau_urban                                  # TAU Urban: 10 cities, 10 scenes, 64h
 
-# List available options
+# List all available options and commands
 python download_datasets.py --list
+
+# Download everything at once (large download ~100GB)
+python download_datasets.py --all --hf_token $HUGGINGFACE_HUB_TOKEN
 ```
 
 **Supported Datasets:**
-- **Speech**: CommonVoice 17.0 (205+ languages, including 8 tonal and 10 non-tonal)
-- **Music**: GTZAN, FMA-small, Carnatic, Hindustani, Turkish Makam, Arab-Andalusian
-- **Scenes**: TAU Urban Acoustic Scenes 2020
+- **Speech:** CommonVoice v17.0 (11 balanced languages: 5 tonal, 6 non-tonal)
+- **Music:** GTZAN, FMA-small (Western) + Carnatic, Hindustani, Turkish Makam, Arab-Andalusian (Non-Western)
+- **Acoustic Scenes:** TAU Urban Acoustic Scenes 2020 (10 European cities, 10 scene types)
 
 ## 📊 Dataset Overview
 
-### Speech Recognition (CommonVoice 17.0)
+Our study evaluates across three complementary domains using **balanced evaluation protocols** to ensure fair cross-cultural comparison and eliminate dataset size biases:
 
-### Speech Recognition (CommonVoice 17.0)
-- **Tonal Languages (5):** Vietnamese (vi), Thai (th), Mandarin (zh-CN), Punjabi (pa-IN), Cantonese (yue)
+### Speech Recognition (CommonVoice v17.0)
+**Linguistically stratified evaluation with standardized data volumes:**
+
+- **Tonal Languages (5):** Mandarin Chinese (zh-CN, 4 tones), Vietnamese (vi, 6 tones), Thai (th, 5 tones), Punjabi (pa-IN, 3 tones), Cantonese (yue, 6 tones)
 - **Non-Tonal Languages (6):** English (en), Spanish (es), German (de), French (fr), Italian (it), Dutch (nl)
-- **Tonal Languages**: Vietnamese (vi), Thai (th), Mandarin (zh-CN), Punjabi (pa-IN), Cantonese (yue), etc.
-- **Non-Tonal Languages**: English (en), Spanish (es), German (de), French (fr), Italian (it), Dutch (nl), etc.  
-- **Total**: 205+ languages available, focusing on 18 key languages for bias analysis
+
+**🎯 Balanced Evaluation Protocol:**
+- **Standardized Sample Size:** Exactly 2,000 test samples per language, randomly sampled to eliminate data volume bias
+- **Audio Specifications:** Average 4.2s duration per sample, 22kHz sample rate (CommonVoice standard)
+- **Controlled Comparison:** Performance differences reflect representational bias, not dataset size disparities
+- **Appropriate Metrics:** Character Error Rate (CER) for tonal languages, Word Error Rate (WER) for non-tonal languages (accounting for orthographic differences)
 
 ### Music Analysis
-- **Western Traditions**: GTZAN (10 genres), FMA-small (8 genres)  
-- **Non-Western Traditions**: Hindustani, Carnatic, Turkish Makam, Arab-Andalusian classical music
-- **Focus**: Genre/raga/makam classification to study cultural bias in musical representations
+**Cross-cultural evaluation contrasting Western vs. Non-Western musical traditions:**
 
-### Acoustic Scene Classification  
-- **Dataset**: TAU Urban Acoustic Scenes 2020
-- **Coverage**: European urban environments (airports, streets, parks, etc.)
-- **Purpose**: Baseline comparison for environmental audio analysis
+**Western Traditions:**
+- **GTZAN:** 10 genres, 1000 tracks for genre classification
+- **FMA-small:** 8 genres, 8000 tracks for balanced genre evaluation
+
+**Non-Western Collections (CompMusic Project):**
+- **Hindustani:** 1124 recordings, 195 ragas (North Indian classical)
+- **Carnatic:** 2380 recordings, 227 ragas (South Indian classical) 
+- **Turkish Makam:** 6500 recordings, 155 makams (Turkish classical)
+- **Arab-Andalusian:** 338 recordings, 11 mizans (Maghrebi classical)
+
+**🎯 Balanced Evaluation Protocol:**
+- **Standardized Sample Size:** Exactly 300 recordings per tradition, randomly sampled to control for vastly different dataset sizes
+- **Audio Specifications:** 30-second segments, standardized to 22kHz sample rate for consistent analysis
+- **Modal Balance:** Equal representation across modal categories (ragas/makams/mizans) within each tradition
+- **Fair Comparison:** Eliminates data volume bias between traditions with 300-6500+ recordings
+- **Consistent Tasks:** Modal classification (non-Western) and genre classification (Western) using macro-F1 scores
+
+### Acoustic Scene Classification
+**Geographic diversity control for environmental audio analysis:**
+
+**TAU Urban Acoustic Scenes 2020 Mobile Dataset:**
+- **Coverage:** 10 European cities (Barcelona, Helsinki, London, Paris, Stockholm, Vienna, Amsterdam, Lisbon, Lyon, Prague)
+- **Scenes:** 10 acoustic environments per city (airport, bus, metro, park, public square, shopping mall, street pedestrian, street traffic, tram, metro station)  
+- **Volume:** 64 hours total recordings
+
+**🎯 Balanced Evaluation Protocol:**
+- **Geographic Balance:** Exactly 100 recordings per city (10 per scene type) to ensure equal geographic representation
+- **Audio Specifications:** 10-second segments, 48kHz sample rate (TAU dataset standard)
+- **Scene Diversity:** Equal representation across all 10 acoustic scene types
+- **Bias Control:** Prevents bias toward cities with more extensive data collection
+- **Standardized Evaluation:** 1,000 total samples with balanced urban diversity
+
+### Evaluation Protocol Summary
+
+**🔬 Why Balanced Evaluation Matters:**
+- **Eliminates Confounding Variables:** Standardized sample sizes ensure performance differences reflect representational bias, not data availability
+- **Fair Cross-Cultural Comparison:** Equal treatment across linguistic families, musical traditions, and geographic regions  
+- **Statistical Validity:** Controlled comparisons enable meaningful conclusions about cultural bias in audio representations
+- **Reproducible Research:** Clear protocols enable replication and extension of findings
 
 ## 🔧 Research Framework (Coming Soon)
 
@@ -118,25 +161,27 @@ Our complete framework will evaluate multiple audio front-ends:
 - **Learnable**: LEAF, SincNet with data-driven filter learning
 - **Evaluation**: Cross-cultural bias metrics and mitigation strategies
 
-## � Expected Results
+## 🔍 Expected Results
 
-Based on preliminary experiments, we anticipate:
+Based on preliminary experiments, our study reveals significant cultural bias in mel-scale representations:
 
 - **Speech Recognition**: ~12.5% performance gap between tonal and non-tonal languages
 - **Music Classification**: ~15.7% degradation for non-Western musical traditions  
-- **Promising Solutions**: ERB and CQT showing significant bias reduction
+- **Promising Solutions**: ERB and CQT showing significant bias reduction with minimal computational overhead
 
-| Language | Script | Tones | Mel CER | LEAF CER | ERB CER | Improvement (Best) |
-|----------|--------|-------|---------|----------|----------|--------------------|
-| Vietnamese | Latin | 6 | 31.2% | 23.8% | 21.9% | **-29.8%** (ERB) |
-| Thai | Thai | 5 | 28.7% | 21.9% | 20.1% | **-30.0%** (ERB) |
-| Mandarin | Hanzi | 4 | 33.4% | 26.8% | 24.3% | **-27.2%** (ERB) |
-| Punjabi | Gurmukhi | 3 | 29.1% | 23.6% | 21.8% | **-25.1%** (ERB) |
-| Cantonese | Hanzi | 6 | 35.6% | 27.8% | 26.1% | **-26.7%** (ERB) |
+**Tonal Languages (Character Error Rate)**
+
+| Language | Tones | Script | Mel CER | LEAF CER | ERB CER | Best Improvement |
+|----------|-------|--------|---------|----------|----------|--------------------|
+| Vietnamese | 6 | Latin | 31.2% | 23.8% | 21.9% | **-29.8%** (ERB) |
+| Thai | 5 | Thai | 28.7% | 21.9% | 20.1% | **-30.0%** (ERB) |
+| Mandarin | 4 | Hanzi | 33.4% | 26.8% | 24.3% | **-27.2%** (ERB) |
+| Punjabi | 3 | Gurmukhi | 29.1% | 23.6% | 21.8% | **-25.1%** (ERB) |
+| Cantonese | 6 | Hanzi | 35.6% | 27.8% | 26.1% | **-26.7%** (ERB) |
 
 **Non-Tonal Languages (Word Error Rate)**
 
-| Language | Family | Mel WER | LEAF WER | ERB WER | Improvement (Best) |
+| Language | Family | Mel WER | LEAF WER | ERB WER | Best Improvement |
 |----------|--------|---------|----------|----------|--------------------|
 | English | Germanic | 18.7% | 17.2% | 17.5% | **-8.0%** (LEAF) |
 | Spanish | Romance | 16.9% | 15.8% | 16.1% | **-6.5%** (LEAF) |
@@ -169,160 +214,68 @@ cross-cultural-mel-bias/
 ├── download_datasets.py     # ✅ Dataset downloader (READY)
 ├── .gitignore              # Git configuration
 └── data/                   # Downloaded datasets (gitignored)
-    ├── commonvoice_*/      # Speech datasets by language
-    ├── gtzan/              # Western music genres  
-    ├── carnatic/           # South Indian classical
-    ├── hindustani/         # North Indian classical
-    ├── turkish_makam/      # Turkish classical
-    ├── arab_andalusian/    # Maghrebi classical
-    └── tau_urban_2020/     # Acoustic scenes
+    ├── commonvoice_*/      # Speech datasets by language (11 languages)
+    ├── gtzan/              # Western: 10 genres, 1000 tracks
+    ├── fma_small/          # Western: 8 genres, 8000 tracks  
+    ├── carnatic/           # Indian classical: 2380 recordings, 227 ragas
+    ├── hindustani/         # Indian classical: 1124 recordings, 195 ragas
+    ├── turkish_makam/      # Turkish classical: 6500 recordings, 155 makams
+    ├── arab_andalusian/    # Maghrebi classical: 338 recordings, 11 mizans
+    └── tau_urban_2020/     # Acoustic scenes: 10 cities, 10 scenes, 64h
 ```
 
 ## 📋 Requirements
 
 ### System Requirements
-- Python 3.8+ (tested on 3.8, 3.9, 3.10)
-- ~200GB storage for complete dataset collection
+- Python 3.8+ (tested on 3.8, 3.9, 3.10, 3.12)
+- ~100GB storage for target datasets (11 languages + 6 music datasets + acoustic scenes)
 - Internet connection for downloading datasets
 - Git for cloning repository
 
 ### Authentication Required
-- **HuggingFace Account**: For CommonVoice speech datasets
-- **Kaggle Account**: For Indian classical music datasets  
-- **No registration needed**: For GTZAN, FMA, Turkish, Arab-Andalusian, and TAU datasets
-│   ├── datasets/              # Dataset loading and preprocessing
-│   │   ├── commonvoice.py    # CommonVoice speech loader
-│   │   ├── music_loaders.py  # GTZAN, FMA, classical music
-│   │   └── scene_loader.py   # TAU Urban scenes
-│   ├── metrics/               # Evaluation and bias metrics
-│   │   ├── fairness.py       # Cross-cultural fairness metrics
-│   │   ├── performance.py    # Standard ML metrics
-│   │   └── cultural_distance.py # Cultural similarity measures
-│   └── utils/                 # Utility functions
-│       ├── audio_utils.py    # Audio processing utilities
-│       ├── visualization.py  # Plotting and visualization
-│       └── logging.py        # Experiment logging
-├── experiments/               # Experiment scripts
-│   ├── speech_recognition.py # Speech ASR experiments
-│   ├── music_classification.py # Music analysis experiments
-│   ├── scene_classification.py # Acoustic scene experiments
-│   ├── reproduce_paper.py    # Full paper reproduction
-│   ├── generate_plots.py     # Figure generation
-│   ├── generate_tables.py    # Table generation
-│   └── ablation_studies.py   # Additional analyses
-├── data/                      # Dataset storage (gitignored)
-│   ├── README.md             # Data organization guide
-│   ├── speech/               # Speech datasets
-│   │   └── commonvoice/      # CommonVoice by language
-│   ├── music/                # Music datasets
-│   │   ├── gtzan/           # GTZAN genre classification
-│   │   ├── fma/             # Free Music Archive
-│   │   ├── carnatic/        # South Indian classical
-│   │   ├── hindustani/      # North Indian classical
-│   │   ├── turkish_makam/   # Turkish classical
-│   │   └── arab_andalusian/ # Maghrebi classical
-│   └── scenes/               # Acoustic scene data
-│       └── tau_urban/       # TAU Urban scenes
-├── results/                   # Experiment outputs (gitignored)
-│   ├── logs/                 # Training logs
-│   ├── models/               # Saved model checkpoints
-│   ├── figures/              # Generated plots
-└── tests/                     # Unit and integration tests
-    ├── test_frontends.py     # Frontend implementation tests
-    ├── test_datasets.py      # Dataset loading tests
-    └── test_experiments.py   # End-to-end experiment tests
-```
-
-## 📋 Requirements
-
-### System Requirements
-- **Python:** 3.8+ (tested on 3.8, 3.9, 3.10)
-- **GPU:** CUDA-compatible GPU with ≥8GB VRAM (recommended for full experiments)
-- **Storage:** ~200GB for all datasets
-- **Memory:** 16GB+ RAM recommended for large-scale experiments
+- **HuggingFace Account**: For CommonVoice speech datasets and GTZAN music dataset
+- **Kaggle Account**: For Indian classical music datasets (Carnatic, Hindustani)  
+- **No registration needed**: For FMA, Turkish Makam, Arab-Andalusian, and TAU datasets
 
 ### Key Dependencies
-- `torch >= 1.12.0` - PyTorch for deep learning models
-- `torchaudio >= 0.12.0` - Audio processing and transformations
-- `librosa >= 0.10.0` - Audio feature extraction
-- `datasets >= 2.0.0` - HuggingFace datasets interface
-- `transformers >= 4.20.0` - Pre-trained speech models
-- `scikit-learn >= 1.1.0` - ML metrics and utilities
-- `matplotlib >= 3.5.0` - Visualization and plotting
-- `seaborn >= 0.11.0` - Statistical visualizations
+```txt
+# Audio processing
+torchaudio>=0.12.0
+librosa>=0.10.0  
+soundfile>=0.12.1
 
-## 🤝 Contributing
+# Dataset access
+datasets>=2.0.0
+huggingface-hub>=0.10.0
+kaggle>=1.5.0
 
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
+# Data handling
+pandas>=1.4.0
+numpy>=1.21.0
+requests>=2.28.0
 
-### Development Setup
-
-```bash
-# Clone in development mode
-git clone https://github.com/shivam-MBZUAI/cross-cultural-mel-bias.git
-cd cross-cultural-mel-bias
-
-# Install in development mode
-pip install -e .
-
-# Install development dependencies
-pip install -r requirements-dev.txt
-
-# Run tests
-python -m pytest tests/
+# Utilities
+pathlib
+zipfile
+tarfile
 ```
 
-### Reporting Issues
+## 🛠️ Current Implementation Status
 
-Please use GitHub Issues to report bugs or request features. Include:
-- Python version and OS
-- Error messages and stack traces
-- Steps to reproduce the issue
-- Expected vs. actual behavior
+✅ **Available Now:**
+- Comprehensive dataset downloader for all research datasets
+- Automated authentication for HuggingFace, Kaggle, and Zenodo
+- Support for target languages with tonal/non-tonal classification
+- Complete music and acoustic scene dataset collection
+- Batch download support for all target languages (`--lang all_target`)
 
-## 📄 License
+🚧 **Coming Soon (Upon Paper Acceptance):**
+- Audio front-end implementations (Mel, ERB, Bark, CQT, LEAF, SincNet)  
+- Cross-cultural bias analysis framework
+- Model training and evaluation pipelines
+- Reproduction scripts for all paper experiments
+- Interactive bias analysis tools
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 📚 Citation
-
-If you use this code or our findings in your research, please cite our paper:
-
-```bibtex
-@inproceedings{chauhan2026crosscultural,
-  title={Cross-Cultural Bias in Mel-Scale Audio Front-Ends: Evidence from Speech and Music},
-  author={Chauhan, Shivam and Pundhir, Ajay},
-  booktitle={IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP)},
-  year={2026},
-  organization={IEEE}
-}
-```
-
-## 🔗 Related Work
-
-- [LEAF: A Learnable Frontend for Audio Classification](https://arxiv.org/abs/2101.08596)
-- [SincNet: Interpretable 1D Convolutional Neural Networks for Speech Recognition](https://arxiv.org/abs/1808.00158)
-- [CommonVoice: A Massively-Multilingual Collection of Transcribed Speech](https://arxiv.org/abs/1912.06670)
-- [Cultural Considerations in Automatic Speech Recognition](https://arxiv.org/abs/2108.04881)
-
-## 📞 Contact
-
-**Shivam Chauhan**  
-Presight AI, Abu Dhabi, UAE  
-Email: [0shivam33@gmail.com](mailto:0shivam33@gmail.com)  
-GitHub: [@shivam-MBZUAI](https://github.com/shivam-MBZUAI)
-
-## 🙏 Acknowledgments
-
-- Mozilla Foundation for the CommonVoice dataset
-- Music Information Retrieval researchers for open-source music datasets
-- TAU research group for acoustic scene classification datasets
-- HuggingFace team for dataset hosting infrastructure
-- Open-source community for audio processing libraries
-
----
-
-**Keywords:** Cross-cultural bias, Audio processing, Speech recognition, Music information retrieval, Fairness in ML, Cultural AI
 ## 🤝 Contributing
 
 We welcome contributions to expand dataset support and improve the downloader! 
