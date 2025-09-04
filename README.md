@@ -71,9 +71,11 @@ python download_datasets.py --dataset commonvoice --lang en --hf_token $HUGGINGF
 
 # Download specific music datasets
 python download_datasets.py --dataset gtzan --hf_token $HUGGINGFACE_HUB_TOKEN                     # Western genres
+python download_datasets.py --dataset fma                                                         # 8 balanced genres
 python download_datasets.py --dataset carnatic                                                    # South Indian classical
 python download_datasets.py --dataset turkish_makam                                               # Turkish classical
-python download_datasets.py --dataset fma                                                         # 8 balanced genres
+python download_datasets.py --dataset hindustani                                                  # Indian RAGA
+python download_datasets.py --dataset arab_andalusian                                             # Arab Andalusian
 
 # Download acoustic scene data  
 python download_datasets.py --dataset tau_urban                 # Urban acoustic scenes
