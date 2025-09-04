@@ -59,7 +59,6 @@ huggingface-cli login
 
 Our comprehensive dataset downloader supports all research datasets:
 
-```bash
 # Download all target speech datasets (5 tonal + 6 non-tonal languages)
 python download_datasets.py --dataset commonvoice --lang all_target --hf_token $HUGGINGFACE_HUB_TOKEN
 
