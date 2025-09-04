@@ -50,7 +50,7 @@ pip install -r requirements.txt
 Before downloading datasets, set up authentication:
 
 ```bash
-# HuggingFace (for CommonVoice datasets)
+# HuggingFace (for CommonVoice and GTZAN datasets)
 huggingface-cli login
 # OR export HUGGINGFACE_HUB_TOKEN="your_token"
 
@@ -64,17 +64,15 @@ huggingface-cli login
 Our comprehensive dataset downloader supports all research datasets:
 
 ```bash
-# Download all datasets (requires ~200GB storage)
-python download_datasets.py --all --hf_token $HUGGINGFACE_HUB_TOKEN
-
-# Download specific speech datasets  
-python download_datasets.py --dataset commonvoice --lang vi     # Vietnamese (tonal)
-python download_datasets.py --dataset commonvoice --lang en     # English (non-tonal)
+# Download speech datasets
+python download_datasets.py --dataset commonvoice --lang all_target --hf_token $HUGGINGFACE_HUB_TOKEN    # All Languages
+python download_datasets.py --dataset commonvoice --lang vi --hf_token $HUGGINGFACE_HUB_TOKEN            # Vietnamese (tonal)
+python download_datasets.py --dataset commonvoice --lang en --hf_token $HUGGINGFACE_HUB_TOKEN            # English (non-tonal)
 
 # Download specific music datasets
-python download_datasets.py --dataset gtzan                     # Western genres
-python download_datasets.py --dataset carnatic                  # South Indian classical
-python download_datasets.py --dataset turkish_makam             # Turkish classical
+python download_datasets.py --dataset gtzan --hf_token $HUGGINGFACE_HUB_TOKEN                     # Western genres
+python download_datasets.py --dataset carnatic                                                    # South Indian classical
+python download_datasets.py --dataset turkish_makam                                               # Turkish classical
 
 # Download acoustic scene data  
 python download_datasets.py --dataset tau_urban                 # Urban acoustic scenes
