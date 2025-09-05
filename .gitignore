@@ -8,11 +8,17 @@ __pycache__/
 
 # Dataset files - excluded for GitHub
 data/
+processed_data/
 *.wav
 *.mp3
 *.flac
 *.zip
 *.tar.gz
+
+# Processing logs and temporary files
+logs/
+validation/
+*.log
 
 # Distribution / packaging
 .Python

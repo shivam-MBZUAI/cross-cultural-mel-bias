@@ -83,7 +83,7 @@ COMMONVOICE_LANGUAGES = {
 }
 
 # Tonal vs non-tonal classification for research purposes
-TONAL_LANGUAGES = ['vi', 'th', 'zh-CN', 'zh-HK', 'zh-TW', 'yue', 'nan-tw', 'pa-IN']  # Vietnamese, Thai, Chinese variants, Cantonese, Punjabi
+TONAL_LANGUAGES = ['vi', 'th', 'zh-HK', 'zh-TW', 'yue', 'nan-tw', 'pa-IN']  # Vietnamese, Thai, Chinese variants, Cantonese, Punjabi
 NON_TONAL_LANGUAGES = ['en', 'es', 'de', 'fr', 'it', 'nl', 'pt', 'ru', 'pl', 'sv-SE']  # Major European languages
 
 MUSIC_DATASETS = ["gtzan", "fma", "carnatic", "turkish_makam", "hindustani", "arab_andalusian"]

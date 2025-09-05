@@ -208,19 +208,33 @@ Based on preliminary experiments, our study reveals significant cultural bias in
 
 ```
 cross-cultural-mel-bias/
-├── README.md                # Project documentation
-├── requirements.txt         # Python dependencies
-├── download_datasets.py     # ✅ Dataset downloader (READY)
-├── .gitignore              # Git configuration
-└── data/                   # Downloaded datasets (gitignored)
-    ├── commonvoice_*/      # Speech datasets by language (11 languages)
-    ├── gtzan/              # Western: 10 genres, 1000 tracks
-    ├── fma_small/          # Western: 8 genres, 8000 tracks  
-    ├── carnatic/           # Indian classical: 2380 recordings, 227 ragas
-    ├── hindustani/         # Indian classical: 1124 recordings, 195 ragas
-    ├── turkish_makam/      # Turkish classical: 6500 recordings, 155 makams
-    ├── arab_andalusian/    # Maghrebi classical: 338 recordings, 11 mizans
-    └── tau_urban_2020/     # Acoustic scenes: 10 cities, 10 scenes, 64h
+├── README.md                   # Project documentation
+├── PROCESSING_GUIDE.md         # ✅ Detailed processing instructions
+├── requirements.txt            # Python dependencies
+├── download_datasets.py        # ✅ Dataset downloader (READY)
+├── preprocess_datasets.py      # ✅ Data preprocessing pipeline (NEW)
+├── validate_datasets.py        # ✅ Dataset validation tools (NEW)
+├── .gitignore                 # Git configuration
+├── data/                      # Raw downloaded datasets (gitignored)
+│   ├── commonvoice_*/         # Speech datasets by language (11 languages)
+│   ├── gtzan/                 # Western: 10 genres, 1000 tracks
+│   ├── fma_small/             # Western: 8 genres, 8000 tracks  
+│   ├── carnatic/              # Indian classical: 2380 recordings, 227 ragas
+│   ├── hindustani/            # Indian classical: 1124 recordings, 195 ragas
+│   ├── turkish_makam/         # Turkish classical: 6500 recordings, 155 makams
+│   ├── arab_andalusian/       # Maghrebi classical: 338 recordings, 11 mizans
+│   └── tau_urban_2020/        # Acoustic scenes: 10 cities, 10 scenes, 64h
+├── processed_data/            # ✅ Processed datasets for experiments (NEW)
+│   ├── speech/                # Speech: 2,000 samples/lang, 22kHz, ~4.2s
+│   ├── music/                 # Music: 300 samples/tradition, 22kHz, 30s  
+│   ├── scenes/                # Scenes: 100 samples/city, 48kHz, 10s
+│   ├── master_summary.json    # Processing statistics
+│   └── README.md              # Processed data documentation
+├── validation/                # ✅ Dataset validation results (NEW)
+│   ├── validation_results.json # Detailed validation metrics
+│   ├── validation_report.md   # Human-readable compliance report
+│   └── validation_plots.png   # Quality and distribution visualizations
+└── logs/                      # Processing and validation logs
 ```
 
 ## 📋 Requirements
@@ -267,6 +281,9 @@ tarfile
 - Support for target languages with tonal/non-tonal classification
 - Complete music and acoustic scene dataset collection
 - Batch download support for all target languages (`--lang all_target`)
+- **Data preprocessing pipeline with paper-compliant balanced evaluation protocols**
+- **Dataset validation and quality assurance tools**
+- **Ready-to-use processed datasets for experiments**
 
 🚧 **Coming Soon (Upon Paper Acceptance):**
 - Audio front-end implementations (Mel, ERB, Bark, CQT, LEAF, SincNet)  
@@ -274,6 +291,45 @@ tarfile
 - Model training and evaluation pipelines
 - Reproduction scripts for all paper experiments
 - Interactive bias analysis tools
+
+## 📋 Quick Processing Workflow
+
+### Step 1: Download Raw Datasets
+```bash
+# Download all target datasets (requires authentication)
+python download_datasets.py --all --hf_token $HUGGINGFACE_HUB_TOKEN
+```
+
+### Step 2: Process for Experiments  
+```bash
+# Process all datasets with balanced evaluation protocols
+python preprocess_datasets.py --all
+
+# Creates processed_data/ with standardized samples:
+# - Speech: 2,000 samples/language, 22kHz, ~4.2s avg
+# - Music: 300 samples/tradition, 22kHz, 30s segments  
+# - Scenes: 100 samples/city, 48kHz, 10s segments
+```
+
+### Step 3: Validate Quality
+```bash
+# Comprehensive validation and compliance checking
+python validate_datasets.py --domain all
+
+# Generates validation report and compliance metrics
+```
+
+### Step 4: Use for Experiments
+```python
+import pandas as pd
+import soundfile as sf
+
+# Load processed dataset
+metadata = pd.read_csv("processed_data/speech/vi/metadata.csv")
+audio, sr = sf.read(metadata.iloc[0]['audio_path'])
+```
+
+**📖 Detailed Guide**: See [PROCESSING_GUIDE.md](PROCESSING_GUIDE.md) for complete instructions.
 
 ## 🤝 Contributing
 

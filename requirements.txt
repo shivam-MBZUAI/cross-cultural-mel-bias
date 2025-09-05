@@ -12,6 +12,7 @@ torchaudio>=0.12.0       # PyTorch audio (dataset loading)
 # Data handling
 pandas>=1.4.0            # Metadata management
 numpy>=1.21.0            # Numerical operations
+scikit-learn>=1.0.0      # Train/test splits and stratified sampling
 
 # System utilities
 pathlib                  # Path handling (built-in Python 3.4+)
@@ -21,4 +22,3 @@ tarfile                  # Archive extraction (built-in)
 # Optional: Advanced audio processing (for future full implementation)
 # torch>=1.12.0          # PyTorch (when models are released)
 # scipy>=1.7.0           # Scientific computing
-# scikit-learn>=1.0.0    # Machine learning utilities
