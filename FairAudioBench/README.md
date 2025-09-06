@@ -1,12 +1,91 @@
-# FairAudioBench: Cross-Cultural Bias Evaluation Framework
+# FairAudioBench: Cross-Cultural Bias Evaluation in Audio Front-Ends
 
-**Complete implementation of the ICASSP 2026 paper: "Cross-Cultural Bias in Mel-Scale Audio Front-Ends: Evidence from Speech and Music"**
+FairAudioBench is the first comprehensive benchmark for evaluating cross-cultural bias in audio systems. This benchmark addresses the critical gap in standardized evaluation protocols for measuring fairness across diverse audio domains.
 
-A production-ready benchmark suite for **evaluating cross-cultural bias** in audio front-ends across speech, music, and environmental sound classification.
+## 🎯 Overview
 
-**Important: This is an evaluation-only framework** - we analyze bias in existing audio representations, not train new models.
+This repository contains the complete implementation of our paper **"Cross-Cultural Bias in Mel-Scale Audio Front-Ends: Evidence from Speech and Music"**. FairAudioBench provides:
+
+- **Curated Datasets**: Balanced splits across 11 languages (5 tonal, 6 non-tonal), 8 musical traditions, 10 European cities with demographic metadata
+- **Evaluation Suite**: Automated computation of WGS, Δ, ρ metrics with statistical significance testing
+- **Reference Implementations**: All six front-ends with matched hyperparameters (5M params) for fair comparison
+
+### 🔍 Evaluation vs Training
+
+**Primary Use Case: EVALUATION** - FairAudioBench is designed primarily for evaluating bias in existing audio front-ends. The core contribution is the bias measurement framework.
+
+**Secondary Use Case: TRAINING** - Training scripts are provided as reference implementations for researchers who want to:
+- Train their own models for comparison
+- Understand the pipeline used in the paper  
+- Adapt the benchmark for new front-ends or tasks
+
+For most users, focus on the **evaluation pipeline** which measures bias across different front-ends without requiring training.
+
+## 📁 Repository Structure
+
+```
+FairAudioBench/
+├── Data/                          # Dataset management
+│   ├── download_datasets.py       # Download script for all datasets
+│   └── preprocess_datasets.py     # Preprocessing and balancing
+├── Scripts/                       # Fairness evaluation
+│   └── fairness_metrics.py        # WGS, Δ, ρ metrics computation
+├── Implementations/               # Model implementations
+│   ├── models/
+│   │   └── frontends.py           # Six front-end implementations
+│   ├── train_models.py            # Training script
+│   └── evaluate_models.py         # Evaluation script
+├── config.json                   # Configuration file
+└── run_benchmark.py              # Complete pipeline runner
+```
 
 ## 🚀 Quick Start
+
+### 1. Environment Setup
+
+```bash
+# Clone the repository
+cd /soot/shivam.chauhan/Sample/cross-cultural-mel-bias/FairAudioBench
+
+# Install dependencies
+pip install torch torchaudio librosa soundfile pandas numpy scipy scikit-learn matplotlib seaborn tqdm
+```
+
+### 2. Run Complete Benchmark
+
+```bash
+# RECOMMENDED: Evaluation-only mode (no training required)
+python run_benchmark.py --evaluation-only
+
+# Download sample data and run quick evaluation
+python run_benchmark.py --evaluation-only --quick-test
+
+# Full pipeline including training (for reference/research)
+python run_benchmark.py
+
+# Run specific steps only
+python run_benchmark.py --step download
+python run_benchmark.py --step preprocess
+python run_benchmark.py --step evaluate --evaluation-only
+python run_benchmark.py --step fairness
+```
+
+### 3. Evaluation-Focused Workflow (Recommended)
+
+```bash
+# Install dependencies
+pip install -r requirements.txt
+
+# Download and preprocess datasets
+python Data/download_datasets.py --languages en es de fr vi th --hf_token $HF_TOKEN
+python Data/preprocess_datasets.py --languages en es de fr vi th --create_splits
+
+# Run bias evaluation on front-ends (no training)
+python run_benchmark.py --evaluation-only --domains speech --frontends mel erb bark
+
+# Generate bias reports
+python Scripts/fairness_metrics.py --results_dir ./results --generate_report
+```
 
 ### Installation and Setup
 ```bash
