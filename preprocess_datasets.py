@@ -71,9 +71,9 @@ PAPER_CONFIG = {
         "segment_duration": 30.0,             # 30-second segments
     },
     "scenes": {
-        "target_samples_per_city": 100,  # Exactly 100 samples per city for evaluation
+        "target_samples_per_scene": 100,  # Exactly 100 samples per scene type for evaluation
         "target_sr": 48000,              # 48kHz (TAU standard)
-        "segment_duration": 10.0,        # 10-second segments
+        "segment_duration": 10.0,        # 10-second segments (original TAU format)
     }
 }
 
@@ -87,10 +87,12 @@ WESTERN_MUSIC = ['gtzan', 'fma_small']                                          
 NON_WESTERN_MUSIC = ['carnatic', 'hindustani', 'turkish_makam', 'arab_andalusian']  # 4 non-Western
 ALL_MUSIC_TRADITIONS = WESTERN_MUSIC + NON_WESTERN_MUSIC                            # 6 total (paper mentions 8, we have 6)
 
-# Scene Datasets (TAU Urban 2020 - 10 European cities)
-TAU_CITIES = [
-    'amsterdam', 'barcelona', 'helsinki', 'lisbon', 'london', 
-    'lyon', 'milan', 'prague', 'paris', 'stockholm'
+# Scene Datasets (TAU Urban 2020 - 10 scene types, recorded in 12 European cities)
+# Cities: Amsterdam, Barcelona, Helsinki, Lisbon, London, Lyon, Madrid, Milan, Prague, Paris, Stockholm, Vienna
+# Scenes: airport, shopping_mall, metro_station, street_pedestrian, public_square, street_traffic, tram, bus, metro, park
+TAU_SCENES = [
+    'airport', 'shopping_mall', 'metro_station', 'street_pedestrian', 'public_square',
+    'street_traffic', 'tram', 'bus', 'metro', 'park'
 ]
 
 def set_seed(seed: int = 42):
@@ -100,61 +102,75 @@ def set_seed(seed: int = 42):
     logger.info(f"Set random seed to {seed} for reproducible sampling")
 
 def load_audio_safely(file_path: Path, target_sr: int) -> Tuple[Optional[np.ndarray], Optional[int]]:
-    """Safely load audio file with fallback methods and better error handling."""
+    """Safely load audio file with timeout and robust error handling for corrupted files."""
+    import warnings
+    import signal
     
-    # Skip obviously bad files
-    if file_path.stat().st_size < 1024:  # Less than 1KB
-        logger.debug(f"Skipping tiny file: {file_path} ({file_path.stat().st_size} bytes)")
-        return None, None
+    class TimeoutException(Exception):
+        pass
     
-    try:
-        # Primary method: soundfile (fastest for most formats)
-        audio, sr = sf.read(str(file_path))
-        if audio.ndim > 1:
-            audio = audio.mean(axis=1)  # Convert to mono
-        
-        # Check for valid audio data
-        if len(audio) == 0:
-            logger.debug(f"Empty audio file: {file_path}")
-            return None, None
-        
-        # Resample if needed
-        if sr != target_sr:
-            audio = librosa.resample(audio, orig_sr=sr, target_sr=target_sr)
-        
-        return audio, target_sr
+    def timeout_handler(signum, frame):
+        raise TimeoutException("Audio loading timeout")
     
-    except Exception as e1:
-        # Common soundfile errors - try librosa
-        logger.debug(f"soundfile failed for {file_path}, trying librosa: {str(e1)[:100]}")
+    # Suppress specific warnings for corrupted MP3 files
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore")
+        
         try:
-            # Fallback: librosa with more robust loading
-            audio, sr = librosa.load(str(file_path), sr=target_sr, mono=True, res_type='kaiser_fast')
+            # Set timeout for audio loading (10 seconds max)
+            signal.signal(signal.SIGALRM, timeout_handler)
+            signal.alarm(10)
             
-            # Check for valid audio data
-            if len(audio) == 0:
-                logger.debug(f"Empty audio after librosa load: {file_path}")
-                return None, None
+            try:
+                # For MP3 files, try librosa with limited duration
+                if file_path.suffix.lower() == '.mp3':
+                    # Use librosa for MP3 - limit to 2 minutes to avoid hanging on corrupted files
+                    audio, sr = librosa.load(str(file_path), sr=target_sr, mono=True, duration=120)
+                    
+                    # Additional validation for corrupted files
+                    if len(audio) == 0 or np.all(audio == 0):
+                        return None, None
+                        
+                    return audio, sr
                 
-            return audio, sr
-            
-        except Exception as e2:
-            # Try one more method for MP3 files
-            if file_path.suffix.lower() == '.mp3':
+                else:
+                    # For WAV files, use soundfile first (fastest)
+                    audio, sr = sf.read(str(file_path))
+                    if audio.ndim > 1:
+                        audio = audio.mean(axis=1)  # Convert to mono
+                    
+                    # Resample if needed
+                    if sr != target_sr:
+                        audio = librosa.resample(audio, orig_sr=sr, target_sr=target_sr)
+                    
+                    return audio, target_sr
+                    
+            except TimeoutException:
+                logger.debug(f"Timeout loading {file_path.name}")
+                return None, None
+            except Exception:
+                # Fallback: try the other method
                 try:
-                    # For problematic MP3s, try loading with different parameters
-                    audio, sr = librosa.load(str(file_path), sr=target_sr, mono=True, offset=0.1, duration=None)
-                    if len(audio) > 0:
+                    if file_path.suffix.lower() == '.mp3':
+                        # Try soundfile for MP3
+                        audio, sr = sf.read(str(file_path))
+                        if audio.ndim > 1:
+                            audio = audio.mean(axis=1)
+                        if sr != target_sr:
+                            audio = librosa.resample(audio, orig_sr=sr, target_sr=target_sr)
+                        return audio, target_sr
+                    else:
+                        # Try librosa for WAV
+                        audio, sr = librosa.load(str(file_path), sr=target_sr, mono=True, duration=120)
                         return audio, sr
-                except:
-                    pass
+                except Exception:
+                    return None, None
             
-            # Log error but don't spam the logs with every failed file
-            if "corrupted" not in str(e1).lower() and "illegal" not in str(e1).lower():
-                logger.warning(f"Failed to load {file_path}: {str(e2)[:100]}")
-            else:
-                logger.debug(f"Skipped corrupted file: {file_path}")
-            
+            finally:
+                signal.alarm(0)  # Cancel timeout
+        
+        except Exception:
+            signal.alarm(0)  # Cancel timeout
             return None, None
 
 def validate_audio(audio: np.ndarray, sr: int, min_duration: float, max_duration: float) -> bool:
@@ -198,20 +214,17 @@ def segment_audio(audio: np.ndarray, sr: int, duration: float, random_segment: b
         padding = target_length - len(audio)
         return np.pad(audio, (0, padding), mode='constant', constant_values=0)
 
-def create_evaluation_dataset(data_list: List, target_count: int, dataset_name: str = "") -> List:
+def create_evaluation_dataset(data_list: List, target_count: int) -> List:
     """Create balanced evaluation dataset (no train/val/test splits - evaluation only)."""
     random.shuffle(data_list)
     
     if len(data_list) < target_count:
-        logger.warning(f"Only {len(data_list)} samples available for {dataset_name}, need {target_count}")
-        if len(data_list) < target_count * 0.5:  # Less than 50% of target
-            logger.error(f"Insufficient samples for {dataset_name}: {len(data_list)} < {target_count * 0.5:.0f} (50% of target)")
-            logger.info(f"Consider downloading more data or reducing target count for {dataset_name}")
+        logger.warning(f"Only {len(data_list)} samples available, need {target_count}")
         return data_list
     else:
         # Select exactly target_count samples for evaluation
         selected = random.sample(data_list, target_count)
-        logger.info(f"Selected {len(selected)} samples for evaluation from {len(data_list)} available")
+        logger.info(f"Selected {len(selected)} samples for evaluation")
         return selected
 
 def preprocess_commonvoice_language(lang_code: str) -> bool:
@@ -263,7 +276,7 @@ def preprocess_commonvoice_language(lang_code: str) -> bool:
     logger.info(f"Found {len(valid_samples)} valid samples for {lang_code}")
     
     # Select exactly target_samples_per_lang samples for evaluation
-    selected_samples = create_evaluation_dataset(valid_samples, config["target_samples_per_lang"], f"{lang_code} speech")
+    selected_samples = create_evaluation_dataset(valid_samples, config["target_samples_per_lang"])
     
     # Save processed audio and metadata (all for evaluation)
     metadata_all = []
@@ -325,8 +338,17 @@ def preprocess_music_tradition(tradition: str) -> bool:
     """Preprocess music dataset for a specific tradition."""
     logger.info(f"Processing music tradition: {tradition}...")
     
-    # Directories
+    # Handle special directory structures
     input_dir = RAW_DATA_DIR / tradition
+    
+    # Special handling for arab_andalusian dataset
+    if tradition == "arab_andalusian":
+        # Check for the nested documents structure
+        nested_dir = input_dir / "ArabAndalusianDataset" / "documents"
+        if nested_dir.exists():
+            input_dir = nested_dir
+            logger.info(f"Using Arab Andalusian documents directory: {input_dir}")
+    
     output_dir = PROCESSED_DATA_DIR / "music" / tradition
     
     if not input_dir.exists():
@@ -347,29 +369,21 @@ def preprocess_music_tradition(tradition: str) -> bool:
     # Load and process audio files
     config = PAPER_CONFIG["music"]
     valid_samples = []
-    processed_files = 0
-    skipped_files = 0
+    failed_files = []
     
     for audio_file in audio_files:
-        processed_files += 1
-        
-        # Progress logging for large datasets
-        if processed_files % 50 == 0:
-            logger.info(f"  Processed {processed_files}/{len(audio_files)} files, found {len(valid_samples)} valid segments")
-        
-        audio, sr = load_audio_safely(audio_file, config["target_sr"])
-        if audio is None:
-            skipped_files += 1
-            continue
-        
-        # For music, we create 30-second segments
-        duration = len(audio) / sr
-        if duration >= config["segment_duration"]:
-            # Can create at least one segment
-            segment = segment_audio(audio, sr, config["segment_duration"], random_segment=True)
+        try:
+            audio, sr = load_audio_safely(audio_file, config["target_sr"])
+            if audio is None:
+                failed_files.append(str(audio_file))
+                continue
             
-            # Additional validation for segment quality
-            if validate_audio(segment, sr, config["segment_duration"] * 0.9, config["segment_duration"] * 1.1):
+            # For music, we create 30-second segments
+            duration = len(audio) / sr
+            if duration >= config["segment_duration"]:
+                # Can create at least one segment
+                segment = segment_audio(audio, sr, config["segment_duration"], random_segment=True)
+                
                 valid_samples.append({
                     "file_path": audio_file,
                     "audio": segment,
@@ -377,18 +391,34 @@ def preprocess_music_tradition(tradition: str) -> bool:
                     "western": tradition in WESTERN_MUSIC,
                     "duration": config["segment_duration"]
                 })
-        else:
-            logger.debug(f"Audio too short ({duration:.1f}s < {config['segment_duration']}s): {audio_file.name}")
-        
-        # If we have enough samples, stop early
-        if len(valid_samples) >= config["target_samples_per_tradition"] * 2:
-            logger.info(f"  Reached target sample count, stopping early at file {processed_files}")
-            break
+            else:
+                logger.debug(f"Audio too short ({duration:.1f}s < {config['segment_duration']}s): {audio_file}")
+            
+            # If we have enough samples, stop
+            if len(valid_samples) >= config["target_samples_per_tradition"] * 2:
+                break
+                
+        except Exception as e:
+            logger.warning(f"Failed to process {audio_file}: {e}")
+            failed_files.append(str(audio_file))
+            continue
     
-    logger.info(f"Created {len(valid_samples)} segments for {tradition} (processed {processed_files} files, skipped {skipped_files})")
+    if failed_files:
+        logger.warning(f"Failed to load {len(failed_files)} files for {tradition}")
+        if len(failed_files) <= 10:  # Show first 10 failed files
+            for failed_file in failed_files[:10]:
+                logger.debug(f"  Failed: {failed_file}")
+    
+    logger.info(f"Created {len(valid_samples)} segments for {tradition}")
+    
+    if len(valid_samples) < config["target_samples_per_tradition"]:
+        logger.warning(f"Only {len(valid_samples)} samples available for {tradition}, need {config['target_samples_per_tradition']}")
+        if len(valid_samples) == 0:
+            logger.error(f"No valid samples found for {tradition}")
+            return False
     
     # Select exactly target_samples_per_tradition samples for evaluation
-    selected_samples = create_evaluation_dataset(valid_samples, config["target_samples_per_tradition"], tradition)
+    selected_samples = create_evaluation_dataset(valid_samples, config["target_samples_per_tradition"])
     
     # Save processed audio and metadata (all for evaluation)
     metadata_all = []
@@ -464,101 +494,87 @@ def preprocess_tau_urban_scenes() -> bool:
     
     logger.info(f"Found {len(audio_files)} audio files for TAU Urban")
     
-    # Process scenes by city
+    # Process scenes - since we can't identify individual scenes from filenames,
+    # we'll process all files as mixed urban scenes and create balanced samples
     config = PAPER_CONFIG["scenes"]
     all_metadata = []
     
-    # Group files by city (extract from filename)
-    city_files = defaultdict(list)
+    logger.info("Processing all files as mixed urban acoustic scenes")
+    
+    # Create balanced urban scenes dataset
+    scene_output_dir = output_dir / "urban_mixed"
+    scene_output_dir.mkdir(exist_ok=True)
+    
+    valid_samples = []
+    processed_count = 0
+    
     for audio_file in audio_files:
-        filename = audio_file.name
-        # TAU Urban files typically have city names in them
-        for city in TAU_CITIES:
-            if city.lower() in filename.lower():
-                city_files[city].append(audio_file)
-                break
-    
-    if not city_files:
-        logger.warning("Could not identify cities from filenames, processing all files as 'urban'")
-        city_files['urban'] = audio_files
-    
-    for city, files in city_files.items():
-        logger.info(f"Processing city: {city} ({len(files)} files)")
-        
-        city_output_dir = output_dir / city
-        city_output_dir.mkdir(exist_ok=True)
-        
-        valid_samples = []
-        
-        for audio_file in files:
-            audio, sr = load_audio_safely(audio_file, config["target_sr"])
-            if audio is None:
-                continue
+        if processed_count >= config["target_samples_per_scene"] * 2:  # Process more than needed
+            break
             
-            # Create 10-second segments
-            duration = len(audio) / sr
-            if duration >= config["segment_duration"]:
+        audio, sr = load_audio_safely(audio_file, config["target_sr"])
+        if audio is None:
+            continue
+        
+        # TAU files are already 10-second segments
+        duration = len(audio) / sr
+        if duration >= config["segment_duration"] * 0.8:  # Accept if at least 80% of target duration
+            # Use the full segment or crop to exact duration
+            if duration > config["segment_duration"]:
                 segment = segment_audio(audio, sr, config["segment_duration"], random_segment=True)
-                
-                valid_samples.append({
-                    "file_path": audio_file,
-                    "audio": segment,
-                    "city": city,
-                    "duration": config["segment_duration"]
-                })
+            else:
+                segment = audio
             
-            # If we have enough samples for this city, stop
-            if len(valid_samples) >= config["target_samples_per_city"] * 2:
-                break
-        
-        logger.info(f"Created {len(valid_samples)} segments for {city}")
-        
-        # Select exactly target_samples_per_city samples for evaluation
-        selected_samples = create_evaluation_dataset(valid_samples, config["target_samples_per_city"], f"{city} scenes")
-        
-        # Save processed audio and metadata (all for evaluation)
-        for idx, sample in enumerate(selected_samples):
-            # Save audio file
-            output_filename = f"{city}_eval_{idx:04d}.wav"
-            output_path = city_output_dir / output_filename
-            sf.write(str(output_path), sample["audio"], config["target_sr"])
-            
-            # Add metadata
-            all_metadata.append({
-                "file_path": str(output_path.relative_to(PROCESSED_DATA_DIR)),
-                "city": city,
-                "purpose": "evaluation",  # All samples for evaluation
-                "duration": sample["duration"],
-                "sample_rate": config["target_sr"],
-                "original_file": str(sample["file_path"])
+            valid_samples.append({
+                "file_path": audio_file,
+                "audio": segment,
+                "scene_type": "urban_mixed",
+                "duration": len(segment) / sr
             })
-        
-        # Save city-specific metadata
-        city_metadata = [m for m in all_metadata if m["city"] == city]
-        city_metadata_df = pd.DataFrame(city_metadata)
-        city_metadata_path = city_output_dir / "metadata.csv"
-        city_metadata_df.to_csv(city_metadata_path, index=False)
-        
-        # Save city summary
-        city_summary = {
-            "city": city,
-            "total_samples": len(city_metadata),
-            "purpose": "evaluation",  # All samples for bias evaluation
-            "target_sr": config["target_sr"],
-            "segment_duration": config["segment_duration"],
-            "processed_at": datetime.now().isoformat()
-        }
-        
-        city_summary_path = city_output_dir / "summary.json"
-        with open(city_summary_path, 'w') as f:
-            json.dump(city_summary, f, indent=2)
+            processed_count += 1
     
-    # Save overall scenes metadata
-    overall_metadata_df = pd.DataFrame(all_metadata)
-    overall_metadata_path = output_dir / "metadata.csv"
-    overall_metadata_df.to_csv(overall_metadata_path, index=False)
+    logger.info(f"Created {len(valid_samples)} segments for urban scenes")
     
-    logger.info(f"Successfully processed TAU Urban: {len(all_metadata)} samples across {len(city_files)} cities")
+    # Select exactly target_samples_per_scene samples for evaluation
+    selected_samples = create_evaluation_dataset(valid_samples, config["target_samples_per_scene"])
+    
+    # Save processed audio and metadata (all for evaluation)
+    for idx, sample in enumerate(selected_samples):
+        # Save audio file
+        output_filename = f"urban_mixed_eval_{idx:04d}.wav"
+        output_path = scene_output_dir / output_filename
+        sf.write(str(output_path), sample["audio"], config["target_sr"])
+        
+        # Add metadata
+        all_metadata.append({
+            "file_path": str(output_path.relative_to(PROCESSED_DATA_DIR)),
+            "scene_type": sample["scene_type"],
+            "purpose": "evaluation",  # All samples for evaluation
+            "duration": sample["duration"],
+            "sample_rate": config["target_sr"],
+            "original_file": str(sample["file_path"])
+        })
+    
+    # Save metadata
+    metadata_df = pd.DataFrame(all_metadata)
+    metadata_path = scene_output_dir / "metadata.csv"
+    metadata_df.to_csv(metadata_path, index=False)
+    
+    # Save summary
+    summary = {
+        "scene_type": "urban_mixed",
+        "total_samples": len(all_metadata),
+        "purpose": "evaluation",  # All samples for bias evaluation
+        "target_sr": config["target_sr"],
+        "segment_duration": config["segment_duration"],
+        "processed_at": datetime.now().isoformat()
+    }
+    
+    summary_path = scene_output_dir / "summary.json"
+    with open(summary_path, 'w') as f:
+        json.dump(summary, f, indent=2)
+    
+    logger.info(f"Successfully processed TAU Urban: {len(all_metadata)} samples across 1 scene type")
     return True
 
 def create_dataset_summary():
@@ -636,10 +652,10 @@ def create_dataset_summary():
                         total_scene_samples += city_summary["total_samples"]
         
         summary["domains"]["scenes"] = {
-            "cities": len(cities),
+            "scene_types": len(cities),
             "total_samples": total_scene_samples,
-            "target_samples_per_city": PAPER_CONFIG["scenes"]["target_samples_per_city"],
-            "city_details": cities
+            "target_samples_per_scene": PAPER_CONFIG["scenes"]["target_samples_per_scene"],
+            "scene_details": cities
         }
     
     # Save overall summary
@@ -784,9 +800,6 @@ def main():
     logger.info(f"Raw data directory: {RAW_DATA_DIR}")
     logger.info(f"Processed data directory: {PROCESSED_DATA_DIR}")
     
-    # Check dataset availability first
-    availability = check_dataset_availability()
-    
     success_results = []
     
     # Check dataset availability before processing
@@ -853,7 +866,7 @@ def main():
         
         if "scenes" in summary["domains"]:
             scenes = summary["domains"]["scenes"]
-            logger.info(f"Scenes: {scenes['cities']} cities, {scenes['total_samples']} samples")
+            logger.info(f"Scenes: {scenes['scene_types']} scene types, {scenes['total_samples']} samples")
     
     else:
         logger.error("No datasets to process. Use --help for usage information.")

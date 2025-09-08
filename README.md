@@ -140,35 +140,6 @@ python download_datasets.py --dataset commonvoice --lang en
 - Scene datasets: ~20GB
 - **Total**: ~100GB free space recommended
 
-**Common Issues:**
-
-*Preprocessing Problems:*
-```bash
-# If you see "Illegal Audio-MPEG-Header" or similar errors:
-# Some music files may be corrupted - this is normal, the script will skip them
-
-# If insufficient samples warning (< 300 for music):
-# This is expected for some datasets - the script uses all available samples
-
-# For very low sample counts, try redownloading:
-python download_datasets.py --dataset carnatic --force
-
-# Check preprocessing logs for detailed error information:
-tail -f logs/preprocessing_*.log
-```
-
-*Missing or Corrupted Data:*
-```bash
-# Check what datasets are available:
-python preprocess_datasets.py --help
-
-# Validate downloaded data:
-python validate_datasets.py --all  # (if available)
-
-# Force reprocessing to clean up any issues:
-python preprocess_datasets.py --all --force
-```
-
 ### 3. Preprocess for Balanced Evaluation
 
 The `preprocess_datasets.py` script creates **balanced evaluation datasets only** (no training splits). This is a bias evaluation study, not a training study.
@@ -176,7 +147,7 @@ The `preprocess_datasets.py` script creates **balanced evaluation datasets only*
 **Dataset Specifications:**
 - **Speech**: 2,000 samples per language (11 languages: 5 tonal, 6 non-tonal)
 - **Music**: 300 samples per tradition (6 traditions: 2 Western, 4 non-Western)  
-- **Scenes**: 100 samples per city (10 European cities from TAU Urban)
+- **Scenes**: 100 samples of mixed urban acoustic scenes from TAU Urban dataset
 
 #### Available Options
 
@@ -231,10 +202,12 @@ processed_data/
 │   │   └── ...
 │   └── ...                    # Other traditions
 ├── scenes/
-│   ├── amsterdam/             # European city
-│   │   ├── amsterdam_eval_0000.wav # 100 evaluation samples
-│   │   └── ...
-│   └── ...                    # Other cities
+│   └── urban_mixed/           # Mixed urban acoustic scenes
+│       ├── urban_mixed_eval_0000.wav # 100 evaluation samples
+│       ├── ...
+│       ├── urban_mixed_eval_0099.wav
+│       ├── metadata.csv       # Sample metadata
+│       └── summary.json       # Processing summary
 └── dataset_summary.json       # Overall summary
 ```
 
@@ -288,7 +261,7 @@ cross-cultural-mel-bias/
 **Non-Western**: Carnatic, Hindustani, Turkish Makam, Arab-Andalusian
 
 ### Acoustic Scenes
-**TAU Urban 2020**: 10 European cities, 10 scene types
+**TAU Urban 2020**: Mixed urban acoustic scenes from 10 scene types recorded in 12 European cities
 
 ## Audio Front-Ends Evaluated
 
