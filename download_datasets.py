@@ -1,4 +1,16 @@
 #!/usr/bin/env python3
+"""
+Cross-Cultural Mel-Scale Audio Frontend Bias Research
+Dataset Downloader for ICASSP 2026 Paper
+
+Downloads all datasets required for cross-cultural bias evaluation:
+- Speech: CommonVoice v17.0 (11 languages: 5 tonal, 6 non-tonal)
+- Music: GTZAN, FMA (Western) + Carnatic, Hindustani, Turkish, Arab (Non-Western)
+- Scenes: TAU Urban Acoustic Scenes 2020 (10 European cities)
+
+Authors: Shivam Chauhan, Ajay Pundhir
+Organization: Presight AI, Abu Dhabi, UAE
+"""
 
 import os
 import sys
@@ -35,7 +47,7 @@ DATA_DIR.mkdir(exist_ok=True)
 HF_CACHE_DIR = DATA_DIR / "hf_cache"
 HF_CACHE_DIR.mkdir(exist_ok=True)
 
-# Available datasets and configurations
+# CommonVoice languages (comprehensive list from v17.0)
 COMMONVOICE_LANGUAGES = {
     'ab': 'Abkhaz', 'ace': 'Acehnese', 'ady': 'Adyghe', 'af': 'Afrikaans', 'am': 'Amharic', 
     'an': 'Aragonese', 'ar': 'Arabic', 'arn': 'Mapudungun', 'as': 'Assamese', 'ast': 'Asturian', 
@@ -82,9 +94,10 @@ COMMONVOICE_LANGUAGES = {
     'zh-TW': 'Chinese (Taiwan)', 'zu': 'Zulu', 'zza': 'Zaza'
 }
 
-# Tonal vs non-tonal classification for research purposes
-TONAL_LANGUAGES = ['vi', 'th', 'zh-HK', 'zh-TW', 'yue', 'nan-tw', 'pa-IN']  # Vietnamese, Thai, Chinese variants, Cantonese, Punjabi
-NON_TONAL_LANGUAGES = ['en', 'es', 'de', 'fr', 'it', 'nl', 'pt', 'ru', 'pl', 'sv-SE']  # Major European languages
+# Target languages for balanced evaluation (from ICASSP 2026 paper)
+TONAL_LANGUAGES = ['vi', 'th', 'zh-CN', 'pa-IN', 'yue']  # 5 tonal languages
+NON_TONAL_LANGUAGES = ['en', 'es', 'de', 'fr', 'it', 'nl']  # 6 non-tonal languages
+TARGET_LANGUAGES = TONAL_LANGUAGES + NON_TONAL_LANGUAGES
 
 MUSIC_DATASETS = ["gtzan", "fma", "carnatic", "turkish_makam", "hindustani", "arab_andalusian"]
 SCENE_DATASETS = ["tau_urban"]
@@ -107,8 +120,8 @@ def setup_huggingface_auth(hf_token: Optional[str] = None) -> bool:
         print(f"Authentication failed: {e}")
         return False
 
-def download_commonvoice_hf(lang_code: str, max_samples: int = 2000, hf_token: Optional[str] = None) -> bool:
-    """Download CommonVoice dataset from Hugging Face - simplified version."""
+def download_commonvoice_hf(lang_code: str, hf_token: Optional[str] = None) -> bool:
+    """Download CommonVoice dataset from Hugging Face - raw dataset only."""
     print(f"Downloading CommonVoice {COMMONVOICE_LANGUAGES.get(lang_code, lang_code)} ({lang_code}) from Hugging Face...")
     
     if lang_code not in COMMONVOICE_LANGUAGES:
@@ -132,91 +145,79 @@ def download_commonvoice_hf(lang_code: str, max_samples: int = 2000, hf_token: O
     try:
         print(f"  Loading CommonVoice 17.0 dataset for language: {lang_code}")
         
-        # Use your suggested approach - direct load_dataset call with explicit cache_dir
-        dataset = load_dataset(
+        # Load the complete dataset - all splits
+        print("  Downloading train split...")
+        train_dataset = load_dataset(
+            "mozilla-foundation/common_voice_17_0", 
+            lang_code, 
+            split="train",
+            cache_dir=str(HF_CACHE_DIR)
+        )
+        
+        print("  Downloading validation split...")
+        val_dataset = load_dataset(
+            "mozilla-foundation/common_voice_17_0", 
+            lang_code, 
+            split="validation",
+            cache_dir=str(HF_CACHE_DIR)
+        )
+        
+        print("  Downloading test split...")
+        test_dataset = load_dataset(
             "mozilla-foundation/common_voice_17_0", 
             lang_code, 
             split="test",
             cache_dir=str(HF_CACHE_DIR)
         )
         
-        print(f"  Processing up to {max_samples} samples...")
+        # Save dataset info - don't extract individual files yet
+        dataset_info = {
+            "language": lang_code,
+            "language_name": COMMONVOICE_LANGUAGES[lang_code],
+            "source": "commonvoice_17.0",
+            "is_tonal": lang_code in TONAL_LANGUAGES,
+            "train_samples": len(train_dataset),
+            "validation_samples": len(val_dataset),
+            "test_samples": len(test_dataset),
+            "total_samples": len(train_dataset) + len(val_dataset) + len(test_dataset),
+            "downloaded_at": pd.Timestamp.now().isoformat(),
+            "cache_dir": str(HF_CACHE_DIR)
+        }
         
-        audio_files = []
-        texts = []
+        # Save dataset metadata
+        metadata_file = output_dir / "dataset_info.json"
+        with open(metadata_file, 'w') as f:
+            import json
+            json.dump(dataset_info, f, indent=2)
         
-        # Process the dataset samples
-        total_samples = len(dataset)
-        samples_to_process = min(max_samples, total_samples)
+        # Create README
+        readme_path = output_dir / "README.md"
+        with open(readme_path, "w") as f:
+            f.write(f"# CommonVoice Dataset - {COMMONVOICE_LANGUAGES[lang_code]} ({lang_code})\n\n")
+            f.write(f"- **Source**: Mozilla Common Voice 17.0\n")
+            f.write(f"- **Language**: {COMMONVOICE_LANGUAGES[lang_code]} ({lang_code})\n")
+            f.write(f"- **Tonal Language**: {'Yes' if lang_code in TONAL_LANGUAGES else 'No'}\n")
+            f.write(f"- **Total Samples**: {dataset_info['total_samples']:,}\n")
+            f.write(f"  - Train: {dataset_info['train_samples']:,}\n")
+            f.write(f"  - Validation: {dataset_info['validation_samples']:,}\n")
+            f.write(f"  - Test: {dataset_info['test_samples']:,}\n")
+            f.write(f"- **Downloaded**: {dataset_info['downloaded_at']}\n")
+            f.write(f"- **Cache Directory**: {dataset_info['cache_dir']}\n\n")
+            f.write("## Usage\n\n")
+            f.write("This is the raw dataset cached by Hugging Face. To use:\n\n")
+            f.write("```python\n")
+            f.write("from datasets import load_dataset\n")
+            f.write(f'dataset = load_dataset("mozilla-foundation/common_voice_17_0", "{lang_code}", cache_dir="{HF_CACHE_DIR}")\n')
+            f.write("```\n\n")
+            f.write("For balanced evaluation, use the preprocessing script:\n")
+            f.write("```bash\n")
+            f.write(f"python preprocess_datasets.py --dataset commonvoice --lang {lang_code}\n")
+            f.write("```\n")
         
-        print(f"  Dataset loaded: {total_samples} total samples, processing {samples_to_process}")
-        
-        for i in range(samples_to_process):
-            try:
-                sample = dataset[i]
-                
-                # Extract audio data
-                audio_data = sample["audio"]
-                audio_array = audio_data["array"]
-                sample_rate = audio_data["sampling_rate"]
-                
-                # Extract text
-                sentence = sample["sentence"].strip()
-                
-                # Skip if no valid content
-                if len(sentence) < 3 or len(audio_array) < 1000:  # Skip very short samples
-                    continue
-                
-                # Save audio file
-                audio_path = output_dir / f"cv17_{lang_code}_{i:06d}.wav"
-                sf.write(str(audio_path), audio_array, sample_rate)
-                
-                # Clean text
-                if sentence.startswith('"') and sentence.endswith('"'):
-                    sentence = sentence[1:-1]
-                if sentence and sentence[-1] not in [".", "?", "!"]:
-                    sentence = sentence + "."
-                
-                audio_files.append(str(audio_path))
-                texts.append(sentence)
-                
-                if (i + 1) % 100 == 0:
-                    print(f"    Processed {i + 1}/{samples_to_process} samples...")
-                    
-            except Exception as e:
-                print(f"    Warning: Failed to process sample {i}: {str(e)[:50]}...")
-                continue
-        
-        if audio_files:
-            # Save metadata
-            metadata = pd.DataFrame({
-                "audio_path": audio_files,
-                "text": texts,
-                "language": lang_code,
-                "language_name": COMMONVOICE_LANGUAGES[lang_code],
-                "source": "commonvoice_17.0",
-                "is_tonal": lang_code in TONAL_LANGUAGES
-            })
-            metadata.to_csv(output_dir / "metadata.csv", index=False)
-            
-            # Create README
-            readme_path = output_dir / "README.md"
-            with open(readme_path, "w") as f:
-                f.write(f"# CommonVoice Dataset - {COMMONVOICE_LANGUAGES[lang_code]} ({lang_code})\n\n")
-                f.write(f"- **Source**: Mozilla Common Voice 17.0\n")
-                f.write(f"- **Language**: {COMMONVOICE_LANGUAGES[lang_code]} ({lang_code})\n")
-                f.write(f"- **Samples**: {len(audio_files)}\n")
-                f.write(f"- **Tonal Language**: {'Yes' if lang_code in TONAL_LANGUAGES else 'No'}\n")
-                f.write(f"- **Downloaded**: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
-                f.write("## Files\n")
-                f.write("- `metadata.csv`: Audio file paths and transcriptions\n")
-                f.write("- `cv17_*.wav`: Audio files (16kHz WAV format)\n")
-            
-            print(f"SUCCESS: CommonVoice {lang_code}: {len(audio_files)} samples saved")
-            return True
-        else:
-            print(f"ERROR: No valid samples processed for {lang_code}")
-            return False
+        print(f"  SUCCESS: Dataset cached with {dataset_info['total_samples']:,} total samples")
+        print(f"  Raw data is available in HuggingFace cache at: {HF_CACHE_DIR}")
+        print(f"  Dataset info saved to: {metadata_file}")
+        return True
             
     except Exception as e:
         print(f"ERROR: Failed to download CommonVoice {lang_code}: {str(e)}")
@@ -246,7 +247,7 @@ def download_gtzan(hf_token: Optional[str] = None):
     
     try:
         print("  Loading GTZAN dataset...")
-        # Use your specified approach with explicit cache_dir
+        # Use direct load_dataset call with explicit cache_dir
         ds = load_dataset("confit/gtzan-parquet", cache_dir=str(HF_CACHE_DIR))
         
         # Get the train split (or first available split)
@@ -376,14 +377,10 @@ def download_fma():
         
         # Extract the zip file
         print("  Extracting FMA Small archive...")
-        import zipfile
         with zipfile.ZipFile(zip_path, 'r') as zip_ref:
             zip_ref.extractall(output_dir)
         
         print("  Archive extracted successfully")
-        
-        # Optional: Remove the zip file to save space
-        # zip_path.unlink()
         
         # Create README
         readme_path = output_dir / "README.md"
@@ -502,9 +499,6 @@ def download_turkish_makam():
         print(f"  Extracted files: {len(extracted_files)} total")
         print(f"  Audio files: {len(audio_files)}")
         print(f"  Metadata files: {len(metadata_files)}")
-        
-        # Optional: Remove the zip file to save space
-        # zip_path.unlink()
         
         return True
         
@@ -709,13 +703,11 @@ def download_arab_andalusian():
             
             # Extract if it's an archive
             if filename.endswith('.zip'):
-                import zipfile
                 with zipfile.ZipFile(file_path, 'r') as zip_ref:
                     zip_ref.extractall(output_dir)
                 print(f"    Extracted {filename}")
                 
             elif filename.endswith('.tar.gz'):
-                import tarfile
                 with tarfile.open(file_path, 'r:gz') as tar_ref:
                     tar_ref.extractall(output_dir)
                 print(f"    Extracted {filename}")
@@ -816,20 +808,14 @@ def download_tau_urban_auto():
             
             # Extract if it's an archive
             if filename.endswith('.zip'):
-                import zipfile
                 with zipfile.ZipFile(file_path, 'r') as zip_ref:
                     zip_ref.extractall(output_dir)
                 print(f"    SUCCESS: Extracted {filename}")
-                # Optionally remove the zip file to save space
-                # file_path.unlink()
                 
             elif filename.endswith('.tar.gz'):
-                import tarfile
                 with tarfile.open(file_path, 'r:gz') as tar_ref:
                     tar_ref.extractall(output_dir)
                 print(f"    SUCCESS: Extracted {filename}")
-                # Optionally remove the tar file to save space
-                # file_path.unlink()
         
         print(f"SUCCESS: TAU Urban Acoustic Scenes: Downloaded to {output_dir}")
         return True
@@ -858,7 +844,7 @@ def parse_arguments() -> argparse.Namespace:
         epilog="""
 Examples:
     python download_datasets.py --all --hf_token YOUR_TOKEN
-    python download_datasets.py --dataset commonvoice --lang english
+    python download_datasets.py --dataset commonvoice --lang en
     python download_datasets.py --dataset gtzan
     python download_datasets.py --list
         """
@@ -884,13 +870,6 @@ Examples:
     parser.add_argument(
         "--hf_token", "--hf-token",
         help="Hugging Face token for authentication"
-    )
-    
-    parser.add_argument(
-        "--max_samples", "--max-samples",
-        type=int,
-        default=2000,
-        help="Maximum samples to download per language (default: 2000 for balanced evaluation)"
     )
     
     parser.add_argument(
@@ -971,7 +950,6 @@ def download_dataset(dataset_name: str, **kwargs) -> bool:
                 try:
                     lang_success = download_commonvoice_hf(
                         lang_code,
-                        max_samples=kwargs.get("max_samples", 2000),
                         hf_token=kwargs.get("hf_token")
                     )
                     if lang_success:
@@ -999,7 +977,6 @@ def download_dataset(dataset_name: str, **kwargs) -> bool:
         
         success = download_commonvoice_hf(
             lang, 
-            max_samples=kwargs.get("max_samples", 2000),
             hf_token=kwargs.get("hf_token")
         )
     
@@ -1025,141 +1002,89 @@ def download_dataset(dataset_name: str, **kwargs) -> bool:
     
     return success
 
-def test_download_function():
-    """Test the download functionality with a small sample."""
-    print("Testing download functionality...")
-    
-    # Test with English as it's most likely to be available
-    test_lang = "english"
-    test_samples = 5
-    
-    print(f"Testing CommonVoice download for {test_lang} with {test_samples} samples...")
-    
-    try:
-        success = download_commonvoice_hf(test_lang, test_samples)
-        if success:
-            print("✓ Test passed: CommonVoice download working")
-            
-            # Check if files were created
-            test_dir = DATA_DIR / f"commonvoice_{test_lang}"
-            if test_dir.exists():
-                audio_files = list(test_dir.glob("*.wav"))
-                metadata_file = test_dir / "metadata.csv"
-                
-                print(f"  - Audio files created: {len(audio_files)}")
-                print(f"  - Metadata file exists: {metadata_file.exists()}")
-                
-                if metadata_file.exists():
-                    import pandas as pd
-                    df = pd.read_csv(metadata_file)
-                    print(f"  - Metadata rows: {len(df)}")
-                    print(f"  - Sample text: {df['text'].iloc[0] if len(df) > 0 else 'None'}")
-                
-                return True
-            else:
-                print("✗ Test failed: No output directory created")
-                return False
-        else:
-            print("✗ Test failed: Download function returned False")
-            return False
-            
-    except Exception as e:
-        print(f"✗ Test failed with exception: {e}")
-        return False
-
 def main():
-    """Main entry point with CLI argument parsing."""
+    """Main download function."""
     args = parse_arguments()
     
-    # Set global DATA_DIR if specified
+    # Update global DATA_DIR
     global DATA_DIR
     DATA_DIR = args.output_dir
     DATA_DIR.mkdir(exist_ok=True)
     
-    print(f"\nCross-Cultural Mel-Scale Audio Frontend Bias - Dataset Downloader")
-    print(f"Target directory: {DATA_DIR}")
-    
-    # List datasets if requested
     if args.list:
         list_available_datasets()
         return
     
-    # Validate arguments
-    if not args.all and not args.dataset:
-        print("ERROR: Must specify either --dataset DATASET or --all")
-        print("Run with --list to see available datasets")
-        return
+    # Setup authentication if token provided
+    if args.hf_token:
+        setup_huggingface_auth(args.hf_token)
     
-    if args.dataset == "commonvoice" and not args.lang:
-        print("ERROR: CommonVoice requires --lang parameter")
-        print("Run with --list to see available languages")
-        return
+    print("=== Cross-Cultural Mel-Scale Audio Frontend Bias - Dataset Downloader ===\n")
+    print("This script downloads RAW datasets only. No preprocessing or balancing is performed.")
+    print("Use preprocess_datasets.py for data preparation after downloading.\n")
     
-    # Setup authentication if needed
-    auth_success = True
-    if args.all or args.dataset == "commonvoice":
-        auth_success = setup_huggingface_auth(args.hf_token)
-        if not auth_success:
-            print("WARNING: Authentication failed. Some downloads may not work.")
+    success_results = []
     
-    print("\n" + "="*50)
-    
-    # Download datasets
     if args.all:
-        print("DOWNLOADING ALL DATASETS...")
+        # Download all datasets
+        print("Downloading ALL available datasets...\n")
         
-        # Download CommonVoice for key languages (subset for testing)
-        print("\nSPEECH DATASETS (CommonVoice):")
-        # Use a subset for --all to avoid downloading 200+ languages
-        key_languages = TONAL_LANGUAGES + NON_TONAL_LANGUAGES
-        all_languages = key_languages
-        successful_languages = 0
+        # CommonVoice for all target languages
+        print("1. Downloading CommonVoice for all target languages...")
+        cv_success = download_dataset("commonvoice", lang="all_target", hf_token=args.hf_token)
+        success_results.append(("CommonVoice (all target langs)", cv_success))
         
-        for lang in all_languages:
-            print(f"\n  Downloading CommonVoice {lang}...")
-            success = download_commonvoice_hf(lang, args.max_samples, args.hf_token)
-            if success:
-                successful_languages += 1
+        # All music datasets
+        for music_dataset in MUSIC_DATASETS:
+            print(f"\n2. Downloading {music_dataset}...")
+            music_success = download_dataset(music_dataset, hf_token=args.hf_token)
+            success_results.append((music_dataset, music_success))
         
-        print(f"\nCommonVoice Summary: {successful_languages}/{len(all_languages)} languages downloaded")
+        # Scene datasets
+        for scene_dataset in SCENE_DATASETS:
+            print(f"\n3. Downloading {scene_dataset}...")
+            scene_success = download_dataset(scene_dataset, hf_token=args.hf_token)
+            success_results.append((scene_dataset, scene_success))
+    
+    elif args.dataset:
+        # Download specific dataset
+        print(f"Downloading dataset: {args.dataset}")
         
-        # Download all music datasets
-        print("\nMUSIC DATASETS:")
-        music_successful = 0
-        for dataset in MUSIC_DATASETS:
-            print(f"\n  Downloading {dataset}...")
-            success = download_dataset(dataset, hf_token=args.hf_token)
-            if success:
-                music_successful += 1
+        if args.dataset == "commonvoice":
+            if not args.lang:
+                print("ERROR: --lang required for CommonVoice dataset")
+                print("Use 'all_target' for all tonal+non-tonal languages, or specific language codes like 'en', 'vi', etc.")
+                return
+            success = download_dataset(args.dataset, lang=args.lang, hf_token=args.hf_token)
+        else:
+            success = download_dataset(args.dataset, hf_token=args.hf_token)
         
-        print(f"\nMusic Summary: {music_successful}/{len(MUSIC_DATASETS)} datasets downloaded")
-        
-        # Download scene datasets
-        print("\nSCENE DATASETS:")
-        print("\n  Downloading TAU Urban...")
-        download_dataset("tau_urban")
+        success_results.append((args.dataset, success))
     
     else:
-        # Download specific dataset
-        print(f"DOWNLOADING {args.dataset.upper()}...")
-        success = download_dataset(
-            args.dataset,
-            lang=args.lang,
-            max_samples=args.max_samples,
-            hf_token=args.hf_token
-        )
-        
-        if success:
-            print(f"\nSUCCESS: {args.dataset} downloaded successfully")
-        else:
-            print(f"\nFAILED: Could not download {args.dataset}")
+        print("ERROR: Must specify --dataset or --all")
+        print("Use --list to see available options, or --help for usage information")
+        return
     
-    print("\n" + "="*50)
-    print("Download process completed.")
-    print("Next steps:")
-    print("1. Verify downloaded data in:", DATA_DIR)
-    print("2. Run validation: python validate.py")
-    print("3. Start experiments: python experiments/reproduce_paper.py")
+    # Print final summary
+    print("\n" + "="*60)
+    print("DOWNLOAD SUMMARY")
+    print("="*60)
+    
+    for dataset_name, success in success_results:
+        status = "✓ SUCCESS" if success else "✗ FAILED"
+        print(f"{status}: {dataset_name}")
+    
+    successful_count = sum(1 for _, success in success_results if success)
+    total_count = len(success_results)
+    
+    print(f"\nOverall: {successful_count}/{total_count} datasets downloaded successfully")
+    
+    if successful_count > 0:
+        print("\nNext steps:")
+        print("1. Run preprocessing: python preprocess_datasets.py --all")
+        print("2. Validate datasets: python validate_datasets.py --all")
+        print("3. Run experiments: python run_experiments.py")
 
 if __name__ == "__main__":
     main()

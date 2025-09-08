@@ -1,24 +1,26 @@
-# Core dependencies for dataset downloading
-datasets>=2.12.0         # Hugging Face datasets (CommonVoice, GTZAN)
+# Cross-Cultural Mel-Scale Audio Frontend Bias Research
+# Dataset downloader and preprocessing dependencies
+
+# Core dataset access
+datasets>=2.12.0         # Hugging Face datasets (CommonVoice)
 huggingface-hub>=0.15.0  # HF authentication and access
-requests>=2.28.0         # Direct downloads (Zenodo, FMA)
-kaggle>=1.5.0            # Kaggle datasets (Carnatic, Hindustani)
+requests>=2.28.0         # Direct downloads
+kaggle>=1.5.0            # Kaggle datasets (optional)
 
 # Audio processing
-soundfile>=0.12.1        # Audio I/O (required for CommonVoice, GTZAN)
-librosa>=0.10.0          # Audio processing utilities
-torchaudio>=0.12.0       # PyTorch audio (dataset loading)
+soundfile>=0.12.1        # Audio I/O and format conversion
+librosa>=0.10.0          # Audio analysis and resampling
+torchaudio>=0.12.0       # PyTorch audio backend
 
-# Data handling
+# Data handling and analysis
 pandas>=1.4.0            # Metadata management
 numpy>=1.21.0            # Numerical operations
 scikit-learn>=1.0.0      # Train/test splits and stratified sampling
 
-# System utilities
-pathlib                  # Path handling (built-in Python 3.4+)
-zipfile                  # Archive extraction (built-in)
-tarfile                  # Archive extraction (built-in)
+# Utilities (built-in Python modules)
+# pathlib, zipfile, tarfile, json, argparse
 
-# Optional: Advanced audio processing (for future full implementation)
-# torch>=1.12.0          # PyTorch (when models are released)
-# scipy>=1.7.0           # Scientific computing
+# Optional development dependencies
+# jupyter>=1.0.0         # For interactive analysis
+# matplotlib>=3.5.0      # For visualization
+# seaborn>=0.11.0        # For statistical plots
