@@ -238,6 +238,6 @@ At 300 Hz (critical for tones):
 
 We introduce **FairAudioBench**, the first comprehensive benchmark for evaluating cross-cultural bias in audio systems:
 
-- **Curated Datasets**: Balanced splits across 11 languages, 8 musical traditions, 10 European cities
-- **Evaluation Suite**: Automated computation of WGS, Δ, ρ metrics with statistical significance testing
-- **Reference Implementations**: All 7 front-ends with matched hyperparameters (5M params)
+- **Curated Datasets**: Balanced splits across 11 languages, 8 musical traditions, 10 European cities (preprocess_datasets.py)
+- **Evaluation Suite**: Automated computation of WGS, Δ, ρ metrics with statistical significance testing (frontends.py)
+- **Reference Implementations**: All 7 front-ends with matched hyperparameters (5M params) (frontends.py)
