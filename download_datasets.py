@@ -660,7 +660,7 @@ def download_arab_andalusian():
     output_dir.mkdir(exist_ok=True)
     
     # Zenodo record URL and API
-    zenodo_record_id = "1291776"
+    zenodo_record_id = "3819968"
     zenodo_api_url = f"https://zenodo.org/api/records/{zenodo_record_id}"
     
     try:

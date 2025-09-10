@@ -221,6 +221,91 @@ python run_experiments.py --config config.json
 python run_experiments.py --quick --frontends mel erb leaf
 ```
 
+### 3. Run Experiments
+
+The repository implements the complete experimental framework from the ICASSP 2026 paper.
+
+#### Quick Test (Recommended First)
+
+```bash
+# Test all components with simulated data
+python test_experiments.py
+
+# Test specific components
+python test_experiments.py --component frontend  # Test audio front-ends
+python test_experiments.py --component bias      # Test bias evaluation
+python test_experiments.py --component viz       # Test visualizations
+```
+
+#### Complete Experimental Pipeline
+
+```bash
+# Run full analysis (requires processed data)
+python run_experiments.py --all
+
+# Quick validation run
+python run_experiments.py --validate
+
+# Custom configuration
+python run_experiments.py --all --config custom_config.json --results_dir ./my_results
+```
+
+#### Available Experiments
+
+**1. Audio Front-End Analysis**
+- Feature extraction across 7 front-ends (Mel, ERB, Bark, CQT, LEAF, SincNet, Mel+PCEN)
+- Cultural bias evaluation using performance gaps and statistical tests
+- Feature space visualization and analysis
+
+**2. Cross-Cultural Bias Evaluation**
+- **Speech**: Tonal vs Non-Tonal language bias analysis
+- **Music**: Western vs Non-Western tradition bias analysis  
+- **Scenes**: Geographic bias analysis across European cities
+
+**3. Statistical Significance Testing**
+- Multiple hypothesis testing with Bonferroni correction
+- Effect size analysis (Cohen's d, Hedge's g)
+- Non-parametric tests (Mann-Whitney U, Kolmogorov-Smirnov)
+
+**4. Visualization Generation**
+- Performance gap comparison plots
+- Feature space bias visualizations (t-SNE, PCA)
+- Statistical significance heatmaps
+- Domain-specific analysis charts
+- Comprehensive bias summary tables
+
+#### Command Line Options
+
+```bash
+python run_experiments.py [OPTIONS]
+
+Options:
+  --all                    Run complete experimental pipeline
+  --validate              Run validation experiments only
+  --quick                 Run abbreviated version for testing
+  --data_dir PATH         Path to processed data directory (default: ./processed_data)
+  --results_dir PATH      Path to save results (default: ./results)
+  --config PATH           Path to configuration file (default: ./config.json)
+  --help                  Show help message
+```
+
+#### Expected Outputs
+
+After running experiments, you'll find in the results directory:
+
+```
+results/
+├── comprehensive_results.json      # Complete experimental data
+├── experiment_summary.json         # Structured summary
+├── EXPERIMENTAL_SUMMARY.md         # Human-readable report
+└── visualizations/
+    ├── figure1_performance_gaps.png       # Main bias comparison
+    ├── figure2_feature_space_bias.png     # Feature space analysis
+    ├── figure3_statistical_significance.png # P-values and effect sizes
+    ├── figure4_domain_analysis.png        # Domain-specific patterns
+    └── table1_bias_summary.csv           # Comprehensive metrics table
+```
+
 ## Results
 
 Our study reveals significant cultural bias in mel-scale representations:
@@ -244,7 +329,6 @@ cross-cultural-mel-bias/
 ├── config.json                 # Experiment configuration
 ├── frontends.py                # Audio front-end implementations
 ├── bias_evaluation.py          # Bias metrics computation
-├── datasets.py                 # Dataset loading utilities
 ├── .gitignore                  # Git ignore rules
 ├── data/                       # Raw datasets (auto-created)
 └── processed_data/             # Processed datasets (auto-created)
