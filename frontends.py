@@ -100,6 +100,9 @@ class ExperimentConfig:
     non_western_music: List[str] = field(default_factory=lambda: [
         "hindustani", "carnatic", "turkish_makam", "arab_andalusian"  # CompMusic
     ])
+    music_cultures: List[str] = field(default_factory=lambda: [
+        "western", "hindustani", "carnatic", "turkish_makam", "arab_andalusian"
+    ])
     music_traditions: Dict[str, str] = field(default_factory=lambda: {
         "hindustani": "195 ragas",
         "carnatic": "227 ragas", 
