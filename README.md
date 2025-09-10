@@ -234,10 +234,72 @@ At 300 Hz (critical for tones):
 | **Vowels** | 85.3% | 86.8% | 87.2% | +1.9% |
 | **Consonants** | 88.1% | 88.4% | 88.9% | +0.8% |
 
+## Running Complete Evaluation
+
+The complete evaluation pipeline is implemented in `frontends.py` and reproduces ALL experiments from the paper:
+
+1. **Frequency resolution analysis** (Section 5.1)
+2. **Cross-cultural evaluation** on 3 tasks (Section 5.2) 
+3. **Computational efficiency analysis** (Section 5.3)
+4. **Statistical significance testing** (Section 5.4)
+5. **Confusion matrix analysis** for tonal languages (Section 5.5)
+6. **Filter visualization and analysis** (Section 5.6)
+7. **Ablation studies** (Section 5.7)
+
+### Run Complete Evaluation
+
+```bash
+# Run all experiments (requires processed data)
+python frontends.py
+
+# This will:
+# 1. Evaluate all 7 front-ends on all 3 tasks
+# 2. Generate all figures from the paper
+# 3. Compute statistical significance tests
+# 4. Create fairness metrics comparison
+# 5. Save results to results/ directory
+```
+
+### Expected Output Structure
+
+```
+results/
+├── all_results.json                 # Complete results in JSON format
+├── table2_complete_results.csv      # Main results table
+└── plots/
+    ├── figure2_fairness_metrics.png
+    ├── figure3_frequency_resolution.png
+    ├── figure5_tone_confusion.png
+    ├── figure6_efficiency.png
+    ├── figure7_filter_comparison.png
+    ├── filters_mel.png
+    ├── filters_erb.png
+    ├── filters_bark.png
+    ├── filters_cqt.png
+    ├── filters_leaf.png
+    └── filters_sincnet.png
+```
+
+### Individual Components
+
+You can also import and run individual experiments:
+
+```python
+from frontends import ExperimentConfig, Experiment1_FrequencyResolution
+
+# Initialize configuration
+config = ExperimentConfig()
+
+# Run individual experiment
+exp1 = Experiment1_FrequencyResolution(config)
+results = exp1.run()
+```
+
 ## FairAudioBench
 
 We introduce **FairAudioBench**, the first comprehensive benchmark for evaluating cross-cultural bias in audio systems:
 
-- **Curated Datasets**: Balanced splits across 11 languages, 8 musical traditions, 10 European cities (preprocess_datasets.py)
-- **Evaluation Suite**: Automated computation of WGS, Δ, ρ metrics with statistical significance testing (frontends.py)
-- **Reference Implementations**: All 7 front-ends with matched hyperparameters (5M params) (frontends.py)
+- **Curated Datasets**: Balanced splits across 11 languages, 8 musical traditions, 10 European cities (`preprocess_datasets.py`)
+- **Evaluation Suite**: Automated computation of WGS, Δ, ρ metrics with statistical significance testing
+- **Reference Implementations**: All 7 front-ends with matched hyperparameters (5M params)
+- **Reproducible Pipeline**: Complete evaluation in single script (`frontends.py`)
