@@ -1,15 +1,73 @@
-# Cross-Cultural Bias in Mel-Scale Audio Front-Ends
+# CROSS-CULTURAL BIAS IN MEL-SCALE REPRESENTATIONS: EVIDENCE AND ALTERNATIVES FROM SPEECH AND MUSIC
 
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**Evidence and Alternatives from Speech and Music**  
-*Shivam Chauhan, Ajay Pundhir*  
-*Presight AI, Abu Dhabi, UAE*
+## Abstract
+Modern audio systems universally employ mel-scale representations derived from 1940s Western psychoacoustic studies, potentially encoding cultural biases that create systematic performance disparities. We demonstrate that mel-scale features achieve 31.2% WER for tonal languages compared to 18.7% for non-tonal languages (12.5% absolute gap), and show 15.7% F1 degradation between Western and non-Western music. Alternative representations significantly reduce these disparities: LEAF reduces the speech gap by 34%, CQT achieves 52% reduction in music performance gaps, and ERB-scale filtering cuts disparities by 31% with only 1% computational overhead.
 
-## Paper Abstract
+## Key Contributions
 
-This paper presents a comprehensive analysis of cross-cultural bias in mel-scale audio representations across speech, music, and acoustic scene recognition tasks. We evaluate 7 audio front-ends on datasets spanning 11 languages, 8 musical traditions, and 10 european regions, revealing systematic biases favoring Western/English content and proposing fairer alternatives.
+1. **Systematic evaluation** of 7 front-ends across 11 languages, 8 musical traditions, and 10 European cities
+2. **Demonstrating mel-scale bias**: 31.2% WER for tonal vs 18.7% for non-tonal languages (12.5% gap)
+3. **Revealing critical frequencies**: 200-500 Hz where mel resolution is insufficient for tonal languages
+4. **Showing alternatives work**: CQT (52% music gap reduction), LEAF (34% speech), ERB (31% across domains)
+5. **Releasing FairAudioBench**: First benchmark for cross-cultural audio evaluation
+
+### Performance Gaps (Figure 1)
+
+| Domain | Mel Baseline Gap | Best Alternative | Reduction |
+|--------|------------------|------------------|-----------|
+| **Speech** (Tonal vs Non-tonal) | 12.5% WER | LEAF: 8.3% | 34% |
+| **Music** (Western vs Non-Western) | 15.7% F1 | CQT: 7.6% | 52% |
+| **Scenes** (Europe-1 vs Europe-2) | 5.6% Acc | ERB: 5.0% | 11% |
+
+### Comprehensive Results (Table 1)
+
+| Front-end | Speech WER/CER (%) |  | Music F1 (%) |  | Scenes Acc (%) |  | Overhead |
+|-----------|---------|----------|--------|--------|----------|----------|----------|
+|           | Tonal | Non-tonal | Non-West | West | Europe-1 | Europe-2 |          |
+| **mel** | 31.2±1.2 | 18.7±0.8 | 56.7±2.1 | 72.4±1.5 | 71.2±1.4 | 76.8±1.2 | 1.00× |
+| **ERB** | 26.4±1.0 | 17.8±0.7 | 62.8±2.0 | 73.1±1.4 | 72.6±1.3 | 77.2±1.1 | 1.01× |
+| **Bark** | 27.2±1.0 | 18.1±0.8 | 61.9±2.1 | 72.8±1.5 | 72.2±1.3 | 76.9±1.2 | 1.01× |
+| **CQT** | 28.8±1.1 | 19.2±0.9 | 65.3±1.9 | 72.9±1.4 | - | - | 1.15× |
+| **LEAF** | 25.8±0.9 | 17.5±0.7 | 62.4±2.0 | 73.5±1.4 | 72.5±1.3 | 77.5±1.1 | 1.08× |
+| **SincNet** | 30.8±1.1 | 18.5±0.8 | 58.3±2.1 | 72.5±1.5 | 71.4±1.3 | 76.9±1.2 | 1.06× |
+| **mel+PCEN** | 28.9±1.1 | 18.2±0.7 | 59.2±2.2 | 72.6±1.5 | 72.3±1.3 | 77.1±1.1 | 1.04× |
+
+### Fairness Metrics
+
+| Metric | Formula | Speech | Music | Scenes |
+|--------|---------|--------|-------|--------|
+| **WGS** | min(Acc) | 68.8→74.2 | 56.7→65.3 | 71.2→72.5 |
+| **Δ** | max-min | 12.5→8.3 | 15.7→7.6 | 5.6→5.0 |
+| **ρ** | min/max | 0.85→0.90 | 0.78→0.90 | 0.93→0.94 |
+
+## Dataset Configuration
+
+### Speech Recognition (CommonVoice v17.0)
+- **Tonal Languages (5)**: Mandarin Chinese (4 tones), Vietnamese (6 tones), Thai (5 tones), Punjabi (3 tones), Cantonese (6 tones)
+- **Non-tonal Languages (6)**: English, Spanish, German, French, Italian, Dutch
+- **Samples**: 2,000 test samples per language
+- **Metrics**: CER for tonal, WER for non-tonal
+
+### Music Analysis
+- **Western Collections**: 
+  - GTZAN (10 genres, 1000 tracks)
+  - FMA-small (8 genres, 8000 tracks)
+- **Non-Western Collections** (CompMusic):
+  - Hindustani (1124 recordings, 195 ragas)
+  - Carnatic (2380 recordings, 227 ragas)
+  - Turkish makam (6500 recordings, 155 makams)
+  - Arab-Andalusian (338 recordings, 11 mizans)
+- **Samples**: 300 recordings per tradition
+
+### Acoustic Scenes (TAU Urban Acoustic Scenes 2020 Mobile)
+- **Europe-1 (Northern)**: Helsinki, Stockholm, Amsterdam, London, Vienna
+- **Europe-2 (Southern)**: Barcelona, Lisbon, Paris, Lyon, Prague
+- **Scene Types**: airport, bus, metro, park, public square, shopping mall, street pedestrian, street traffic, tram, metro station
+- **Samples**: 100 recordings per city (10 per scene type)
+
 
 ## Quick Start
 
@@ -28,7 +86,7 @@ huggingface-cli login  # Login with your HF token
 ```
 
 
-#### Available Options
+#### Dataset Preparation
 
 ```bash
 # List all available datasets and languages (205 languages available for CommonVoice)
@@ -63,18 +121,6 @@ python download_datasets.py --all --output_dir /path/to/custom/data --hf_token $
 python download_datasets.py --help
 ```
 
-#### Command Line Arguments
-
-- `--dataset DATASET`: Download specific dataset  
-  **Choices**: `commonvoice`, `gtzan`, `fma_small`, `carnatic`, `turkish_makam`, `hindustani`, `arab_andalusian`, `tau_urban`
-- `--lang LANGUAGE`: Language for CommonVoice dataset  
-  **Options**: Any of 205+ language codes (e.g., `en`, `vi`, `th`, `zh-CN`, `pa-IN`, `yue`, `es`, `de`, `fr`, `it`, `nl`) or `all_target` for all 11 target languages
-- `--all`: Download all available datasets (CommonVoice + Music + Scenes)
-- `--hf_token TOKEN`: HuggingFace Hub token for authentication (required for CommonVoice)
-- `--list`: List all available datasets, languages, and usage examples
-- `--output_dir PATH`: Custom output directory for datasets (default: `./data`)
-- `--help`: Show detailed help message with all options
-
 #### Dataset Details
 
 **SPEECH DATASETS:**
@@ -91,7 +137,7 @@ python download_datasets.py --help
 **SCENE DATASETS:**
 - `tau_urban` - TAU Urban Acoustic Scenes 2020 dataset
 
-#### Target Languages (ICASSP 2026 Paper)
+#### Target Languages
 
 **Tonal Languages (5)**: Vietnamese (vi), Thai (th), Mandarin Chinese (zh-CN), Punjabi (pa-IN), Cantonese (yue)  
 **Non-Tonal Languages (6)**: English (en), Spanish (es), German (de), French (fr), Italian (it), Dutch (nl)
@@ -105,8 +151,6 @@ The `preprocess_datasets.py` script creates **balanced evaluation datasets only*
 - **Speech**: 2,000 samples per language (11 languages: 5 tonal, 6 non-tonal)
 - **Music**: 300 samples per tradition (6 traditions: 2 Western, 4 non-Western)  
 - **Scenes**: 100 samples of mixed urban acoustic scenes from TAU Urban dataset
-
-#### Available Options
 
 ```bash
 # Show all available options and help
@@ -141,46 +185,59 @@ python preprocess_datasets.py --all --seed 123
 python preprocess_datasets.py --all --force
 ```
 
-#### Available Experiments
+## Implemented Front-ends
 
-**1. Audio Front-End Analysis**
-- Feature extraction across 7 front-ends (Mel, ERB, Bark, CQT, LEAF, SincNet, Mel+PCEN)
-- Cultural bias evaluation using performance gaps and statistical tests
-- Feature space visualization and analysis
+All front-ends use identical CRNN backend (4 conv layers: 64-128-256-256 channels, 2-layer BiLSTM: 256 units, 5M total parameters):
 
-**2. Cross-Cultural Bias Evaluation**
-- **Speech**: Tonal vs Non-Tonal language bias analysis
-- **Music**: Western vs Non-Western tradition bias analysis  
-- **Scenes**: Geographic bias analysis across European cities
+1. **Mel**: 40 mel-spaced filters, 25ms windows, 10ms hop
+2. **ERB**: 32 ERB-spaced filters (Glasberg & Moore 1990)
+3. **Bark**: 24 critical bands (Zwicker 1961)
+4. **SincNet**: 64 learnable sinc filters (Ravanelli & Bengio 2018)
+5. **CQT**: 84 bins (7 octaves × 12 bins/octave) (Brown 1991)
+6. **LEAF**: 64 learnable Gabor filters (Zeghidour et al. 2021)
+7. **mel+PCEN**: Per-channel energy normalization (Wang et al. 2017)
 
+## Key Findings
 
-## Results
+### The Mechanism of Bias (Section 2.3)
 
-### Performance Gaps (Figure 1)
+The mel scale applies non-linear frequency warping:
+```
+ψ_mel(f) = 2595 log₁₀(1 + f/700)
+```
 
-| Domain | Mel Baseline Gap | Best Alternative | Reduction |
-|--------|------------------|------------------|-----------|
-| **Speech** (Tonal vs Non-tonal) | 12.5% WER | LEAF: 8.3% | 34% |
-| **Music** (Western vs Non-Western) | 15.7% F1 | CQT: 7.6% | 52% |
-| **Scenes** (Europe-1 vs Europe-2) | 5.6% Acc | ERB: 5.0% | 11% |
+At 300 Hz (critical for tones):
+- **Mel resolution**: ~35 Hz
+- **Required for tones**: ~3 Hz
+- **Resolution deficit**: >10×
 
-### Comprehensive Results (Table 1)
+### LEAF's Adaptive Behavior (Figure 2)
+- Allocates **42% of filters to 80-500 Hz** for tonal languages
+- Only 23% for mel in same range
+- Data-driven discovery validates theoretical analysis
 
-| Front-end | Speech WER/CER (%) |  | Music F1 (%) |  | Scenes Acc (%) |  | Overhead |
-|-----------|---------|----------|--------|--------|----------|----------|----------|
-|           | Tonal | Non-tonal | Non-West | West | Europe-1 | Europe-2 |          |
-| **mel** | 31.2±1.2 | 18.7±0.8 | 56.7±2.1 | 72.4±1.5 | 71.2±1.4 | 76.8±1.2 | 1.00× |
-| **ERB** | 26.4±1.0 | 17.8±0.7 | 62.8±2.0 | 73.1±1.4 | 72.6±1.3 | 77.2±1.1 | 1.01× |
-| **Bark** | 27.2±1.0 | 18.1±0.8 | 61.9±2.1 | 72.8±1.5 | 72.2±1.3 | 76.9±1.2 | 1.01× |
-| **CQT** | 28.8±1.1 | 19.2±0.9 | 65.3±1.9 | 72.9±1.4 | - | - | 1.15× |
-| **LEAF** | 25.8±0.9 | 17.5±0.7 | 62.4±2.0 | 73.5±1.4 | 72.5±1.3 | 77.5±1.1 | 1.08× |
-| **SincNet** | 30.8±1.1 | 18.5±0.8 | 58.3±2.1 | 72.5±1.5 | 71.4±1.3 | 76.9±1.2 | 1.06× |
-| **mel+PCEN** | 28.9±1.1 | 18.2±0.7 | 59.2±2.2 | 72.6±1.5 | 72.3±1.3 | 77.1±1.1 | 1.04× |
+### Language-Specific Improvements (Table 3)
 
-### Fairness Metrics
+| Language | Tones | mel WER | LEAF WER | Improvement |
+|----------|-------|---------|----------|-------------|
+| Vietnamese | 6 | 35.2% | 26.9% | -23.6% |
+| Thai | 5 | 33.1% | 25.4% | -23.3% |
+| Cantonese | 6 | 34.0% | 26.5% | -22.1% |
+| Mandarin | 4 | 28.4% | 22.8% | -19.7% |
+| Punjabi | 3 | 30.5% | 24.8% | -18.7% |
 
-| Metric | Formula | Speech | Music | Scenes |
-|--------|---------|--------|-------|--------|
-| **WGS** | min(Acc) | 68.8→74.2 | 56.7→65.3 | 71.2→72.5 |
-| **Δ** | max-min | 12.5→8.3 | 15.7→7.6 | 5.6→5.0 |
-| **ρ** | min/max | 0.85→0.90 | 0.78→0.90 | 0.93→0.94 |
+### Feature-Level Analysis (Table 2)
+
+| Feature | mel | ERB | LEAF | Δ |
+|---------|-----|-----|------|---|
+| **Tones (F0)** | 71.2% | 82.4% | 83.7% | +12.5% |
+| **Vowels** | 85.3% | 86.8% | 87.2% | +1.9% |
+| **Consonants** | 88.1% | 88.4% | 88.9% | +0.8% |
+
+## FairAudioBench
+
+We introduce **FairAudioBench**, the first comprehensive benchmark for evaluating cross-cultural bias in audio systems:
+
+- **Curated Datasets**: Balanced splits across 11 languages, 8 musical traditions, 10 European cities
+- **Evaluation Suite**: Automated computation of WGS, Δ, ρ metrics with statistical significance testing
+- **Reference Implementations**: All 7 front-ends with matched hyperparameters (5M params)
