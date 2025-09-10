@@ -6,7 +6,7 @@ Dataset Downloader for ICASSP 2026 Paper
 Downloads all datasets required for cross-cultural bias evaluation:
 - Speech: CommonVoice v17.0 (11 languages: 5 tonal, 6 non-tonal)
 - Music: GTZAN, FMA (Western) + Carnatic, Hindustani, Turkish, Arab (Non-Western)
-- Scenes: TAU Urban Acoustic Scenes 2020 (10 European cities)
+- Scenes: TAU Urban Acoustic Scenes 2019 (10 European cities)
 
 Authors: Shivam Chauhan, Ajay Pundhir
 Organization: Presight AI, Abu Dhabi, UAE
@@ -760,10 +760,10 @@ def download_arab_andalusian_manual():
     print(f"Place extracted files in: {DATA_DIR}/arab_andalusian/")
 
 def download_tau_urban_auto():
-    """Automatically download TAU Urban Acoustic Scenes 2020 from Zenodo."""
-    print("Downloading TAU Urban Acoustic Scenes 2020 from Zenodo...")
+    """Automatically download TAU Urban Acoustic Scenes 2019 from Zenodo."""
+    print("Downloading TAU Urban Acoustic Scenes 2019 from Zenodo...")
     
-    output_dir = DATA_DIR / "tau_urban_2020"
+    output_dir = DATA_DIR / "tau_urban_2019"
     output_dir.mkdir(exist_ok=True)
     
     # Zenodo record URL and file info
@@ -829,8 +829,8 @@ def download_tau_urban_auto():
 def download_tau_urban_manual():
     """Fallback manual download instructions for TAU Urban."""
     url = "https://zenodo.org/records/3685828"
-    print(f"[Manual] Download TAU Urban Acoustic Scenes 2020 from: {url}")
-    print(f"Place extracted files in: {DATA_DIR}/tau_urban_2020/")
+    print(f"[Manual] Download TAU Urban Acoustic Scenes 2019 from: {url}")
+    print(f"Place extracted files in: {DATA_DIR}/tau_urban_2019/")
 
 def download_tau_urban():
     """Download TAU Urban dataset (try automatic first, fall back to manual)."""
@@ -914,7 +914,7 @@ def list_available_datasets():
     print()
     
     print("SCENE DATASETS:")
-    print("  tau_urban - TAU Urban Acoustic Scenes 2020 dataset")
+    print("  tau_urban - TAU Urban Acoustic Scenes 2019 dataset")
     print()
     
     print("EXAMPLE COMMANDS:")

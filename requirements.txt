@@ -1,26 +1,33 @@
-# Cross-Cultural Mel-Scale Audio Frontend Bias Research
-# Dataset downloader and preprocessing dependencies
+# Core dependencies for Cross-Cultural Audio Bias Evaluation
+# ICASSP 2026 Paper - EVALUATION ONLY (No Training)
 
-# Core dataset access
-datasets>=2.12.0         # Hugging Face datasets (CommonVoice)
-huggingface-hub>=0.15.0  # HF authentication and access
-requests>=2.28.0         # Direct downloads
-kaggle>=1.5.0            # Kaggle datasets (optional)
+# Core ML frameworks
+torch>=2.0.0
+torchaudio>=2.0.0
+numpy>=1.23.0
+scipy>=1.10.0
+scikit-learn>=1.2.0
 
 # Audio processing
-soundfile>=0.12.1        # Audio I/O and format conversion
-librosa>=0.10.0          # Audio analysis and resampling
-torchaudio>=0.12.0       # PyTorch audio backend
+librosa>=0.10.0
+soundfile>=0.12.0
+audioread>=3.0.0
 
-# Data handling and analysis
-pandas>=1.4.0            # Metadata management
-numpy>=1.21.0            # Numerical operations
-scikit-learn>=1.0.0      # Train/test splits and stratified sampling
+# Data handling
+pandas>=2.0.0
+h5py>=3.8.0
 
-# Utilities (built-in Python modules)
-# pathlib, zipfile, tarfile, json, argparse
+# Visualization for paper figures
+matplotlib>=3.6.0
+seaborn>=0.12.0
 
-# Optional development dependencies
-# jupyter>=1.0.0         # For interactive analysis
-# matplotlib>=3.5.0      # For visualization
-# seaborn>=0.11.0        # For statistical plots
+# Utilities
+tqdm>=4.65.0
+requests>=2.28.0
+
+# For statistical tests
+statsmodels>=0.14.0
+
+# Optional: For downloading datasets
+gdown>=4.7.0  # Google Drive downloads
+kaggle>=1.5.0  # Kaggle datasets (if needed)
