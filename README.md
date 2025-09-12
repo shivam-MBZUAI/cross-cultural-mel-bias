@@ -116,8 +116,29 @@ Assuming the data files are already downloaded and are present inside data/ fold
 ### Preprocessing
 
 ```bash
+### Preprocessing
+
 # Process all domains for evaluation
-python preprocess_datasets.py --all
+python preprocess_datasets.py --data_dir /path/to/data --output_dir processed_data --domain all
+
+# Process specific domains
+python preprocess_datasets.py --data_dir . --output_dir processed_data --domain speech
+python preprocess_datasets.py --data_dir . --output_dir processed_data --domain music
+python preprocess_datasets.py --data_dir . --output_dir processed_data --domain scenes
+
+# With custom seed for different random sampling
+python preprocess_datasets.py --data_dir . --output_dir processed_data --domain all --seed 42
+
+# Parameters:
+#   --data_dir: Directory containing raw data with speech/, music/, scenes/ subdirectories
+#   --output_dir: Output directory for processed evaluation sets
+#   --domain: Which domain to process [speech|music|scenes|all]
+#   --seed: Random seed for reproducible sampling (default: 42)
+
+# This creates balanced evaluation sets:
+#   - Speech: 2,000 samples per language (11 languages)
+#   - Music: 300 samples per tradition (6 traditions)
+#   - Scenes: 100 samples per region (2 regions)
 ```
 
 ### Running Experiments
