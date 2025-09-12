@@ -49,7 +49,7 @@ Modern audio systems universally employ mel-scale representations derived from 1
 
 ### Datasets
 
-#### Speech Recognition (CommonVoice v17.0)
+#### Speech Recognition [CommonVoice v17.0](https://huggingface.co/datasets/mozilla-foundation/common_voice_17_0)
 - **Tonal Languages (5)**: Mandarin Chinese (4 tones), Vietnamese (6 tones), Thai (5 tones), Punjabi (3 tones), Cantonese (6 tones)
 - **Non-tonal Languages (6)**: English, Spanish, German, French, Italian, Dutch
 - **Samples**: 2,000 test samples per language
@@ -57,16 +57,16 @@ Modern audio systems universally employ mel-scale representations derived from 1
 
 #### Music Analysis
 - **Western Collections**: 
-  - GTZAN (10 genres, 1000 tracks)
-  - FMA-small (8 genres, 8000 tracks)
+  - [GTZAN](https://www.kaggle.com/datasets/andradaolteanu/gtzan-dataset-music-genre-classification) (10 genres, 1000 tracks)
+  - [FMA-small](https://os.unil.cloud.switch.ch/fma/fma_small.zip) (8 genres, 8000 tracks)
 - **Non-Western Collections** (CompMusic):
-  - Hindustani (1124 recordings, 195 ragas)
-  - Carnatic (2380 recordings, 227 ragas)
-  - Turkish makam (6500 recordings, 155 makams)
-  - Arab-Andalusian (338 recordings, 11 mizans)
+  - [Hindustani](https://www.kaggle.com/datasets/kcwaghmarewaghmare/indian-music-raga) (1124 recordings, 195 ragas)
+  - [Carnatic](https://www.kaggle.com/datasets/desolationofsmaug/saraga-carnatic-music-dataset) (2380 recordings, 227 ragas)
+  - [Turkish makam](https://zenodo.org/records/1283350/files/turkish_sarki_vocal_v2.0.zip?download=1) (6500 recordings, 155 makams)
+  - [Arab-Andalusian](https://zenodo.org/records/1291776) (338 recordings, 11 mizans)
 - **Samples**: 300 recordings per tradition
 
-#### Acoustic Scenes (TAU Urban Acoustic Scenes 2020 Mobile)
+#### Acoustic Scenes [TAU Urban Acoustic Scenes 2020 Mobile](https://zenodo.org/records/3819968)
 - **Europe-1 (Northern)**: Helsinki, Stockholm, Amsterdam, London, Vienna
 - **Europe-2 (Southern)**: Barcelona, Lisbon, Paris, Lyon, Prague
 - **Scene Types**: 10 urban acoustic environments
@@ -111,11 +111,7 @@ huggingface-cli login  # Login with your HF token
 ```
 
 ### Dataset Preparation
-
-```bash
-# Download all target datasets
-python download_datasets.py --all --hf_token $HUGGINGFACE_HUB_TOKEN
-```
+Assuming the data files are already downloaded and are present inside data/ folder.
 
 ### Preprocessing
 
