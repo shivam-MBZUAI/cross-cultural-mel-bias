@@ -43,8 +43,6 @@ Modern audio systems universally employ mel-scale representations derived from 1
 | **Δ** | max-min | 12.5→8.3 | 15.7→7.6 | 5.6→5.0 |
 | **ρ** | min/max | 0.85→0.90 | 0.78→0.90 | 0.93→0.94 |
 
-## Dataset Configuration
-
 ### Speech Recognition (CommonVoice v17.0)
 - **Tonal Languages (5)**: Mandarin Chinese (4 tones), Vietnamese (6 tones), Thai (5 tones), Punjabi (3 tones), Cantonese (6 tones)
 - **Non-tonal Languages (6)**: English, Spanish, German, French, Italian, Dutch

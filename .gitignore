@@ -21,9 +21,6 @@ wheels/
 *.egg
 
 # Data directories
-data/
-processed_data/
-results/
 logs/
 validation/
 
@@ -50,6 +47,7 @@ Thumbs.db
 *.h5
 *.pkl
 *.model
+*.json
 
 # Temporary files
 *.tmp
