@@ -14,9 +14,6 @@ import librosa
 from pathlib import Path
 from tqdm import tqdm
 from collections import defaultdict
-import matplotlib.pyplot as plt
-import seaborn as sns
-import pandas as pd
 from sklearn.metrics import accuracy_score, f1_score, confusion_matrix
 import warnings
 warnings.filterwarnings('ignore')
@@ -218,8 +215,6 @@ class MelPCEN(nn.Module):
 
 # ============== CRNN MODEL ==============
 
-# ============== CRNN MODEL ==============
-
 class CRNN(nn.Module):
     """CRNN model for all tasks - with BatchNorm to match trained models"""
     def __init__(self, input_dim=80, num_classes=10, task_type='classification'):
@@ -228,11 +223,11 @@ class CRNN(nn.Module):
         
         # CNN layers WITH BatchNorm
         self.conv1 = nn.Conv2d(1, 32, kernel_size=(3, 3), padding=1)
-        self.bn1 = nn.BatchNorm2d(32)  # ADD THIS
+        self.bn1 = nn.BatchNorm2d(32)
         self.conv2 = nn.Conv2d(32, 64, kernel_size=(3, 3), padding=1)
-        self.bn2 = nn.BatchNorm2d(64)  # ADD THIS
+        self.bn2 = nn.BatchNorm2d(64)
         self.conv3 = nn.Conv2d(64, 128, kernel_size=(3, 3), padding=1)
-        self.bn3 = nn.BatchNorm2d(128)  # ADD THIS
+        self.bn3 = nn.BatchNorm2d(128)
         
         self.pool = nn.MaxPool2d(2, 2)
         self.dropout = nn.Dropout(0.3)
@@ -253,13 +248,13 @@ class CRNN(nn.Module):
             x = x.unsqueeze(1)
         
         # CNN feature extraction WITH BatchNorm
-        x = self.pool(torch.relu(self.bn1(self.conv1(x))))  # USE bn1
+        x = self.pool(torch.relu(self.bn1(self.conv1(x))))
         x = self.dropout(x)
         
-        x = self.pool(torch.relu(self.bn2(self.conv2(x))))  # USE bn2
+        x = self.pool(torch.relu(self.bn2(self.conv2(x))))
         x = self.dropout(x)
         
-        x = self.pool(torch.relu(self.bn3(self.conv3(x))))  # USE bn3
+        x = self.pool(torch.relu(self.bn3(self.conv3(x))))
         x = self.dropout(x)
         
         # Reshape for RNN
@@ -581,136 +576,6 @@ class FairnessEvaluator:
         return results
 
 
-# ============== VISUALIZATION ==============
-
-def create_visualizations(results, output_dir='plots'):
-    """Generate all paper figures from actual experimental results"""
-    os.makedirs(output_dir, exist_ok=True)
-    
-    # Set style
-    plt.style.use('seaborn-v0_8-darkgrid')
-    sns.set_palette("husl")
-    
-    # Figure 1: Performance vs Fairness Trade-off
-    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
-    
-    for idx, task in enumerate(['music', 'scene', 'speech']):
-        ax = axes[idx]
-        
-        # Extract data for plotting
-        frontend_names = []
-        performances = []
-        fairness = []
-        
-        for frontend, frontend_results in results.items():
-            if task in frontend_results and 'overall_accuracy' in frontend_results[task]:
-                frontend_names.append(frontend)
-                performances.append(frontend_results[task]['overall_accuracy'])
-                fairness.append(1 - frontend_results[task]['wgs'])  # Higher is better
-        
-        if performances:
-            # Create scatter plot
-            scatter = ax.scatter(performances, fairness, s=100, alpha=0.6)
-            
-            # Add labels
-            for i, name in enumerate(frontend_names):
-                ax.annotate(name, (performances[i], fairness[i]), 
-                          fontsize=8, ha='center')
-            
-            ax.set_xlabel('Performance (Accuracy)', fontsize=10)
-            ax.set_ylabel('Fairness (1 - WGS)', fontsize=10)
-            ax.set_title(f'{task.capitalize()} Classification', fontsize=12)
-            ax.grid(True, alpha=0.3)
-    
-    plt.suptitle('Performance vs Fairness Trade-off', fontsize=14, y=1.02)
-    plt.tight_layout()
-    plt.savefig(f'{output_dir}/performance_fairness_tradeoff.png', dpi=300, bbox_inches='tight')
-    plt.close()
-    
-    # Figure 2: Fairness Metrics Comparison
-    fig, axes = plt.subplots(3, 3, figsize=(15, 12))
-    
-    metrics = ['wgs', 'gap', 'di']
-    tasks = ['music', 'scene', 'speech']
-    
-    for i, task in enumerate(tasks):
-        for j, metric in enumerate(metrics):
-            ax = axes[i, j]
-            
-            # Extract data
-            frontend_names = []
-            values = []
-            
-            for frontend, frontend_results in results.items():
-                if task in frontend_results and metric in frontend_results[task]:
-                    frontend_names.append(frontend)
-                    values.append(frontend_results[task][metric])
-            
-            if values:
-                # Create bar plot
-                bars = ax.bar(range(len(frontend_names)), values)
-                ax.set_xticks(range(len(frontend_names)))
-                ax.set_xticklabels(frontend_names, rotation=45, ha='right')
-                ax.set_ylabel(metric.upper(), fontsize=10)
-                ax.set_title(f'{task.capitalize()} - {metric.upper()}', fontsize=11)
-                ax.grid(True, alpha=0.3, axis='y')
-                
-                # Color bars based on performance
-                colors = plt.cm.RdYlGn(np.array(values) / max(values) if max(values) > 0 else 1)
-                for bar, color in zip(bars, colors):
-                    bar.set_color(color)
-    
-    plt.suptitle('Fairness Metrics Across Tasks and Front-ends', fontsize=14, y=1.02)
-    plt.tight_layout()
-    plt.savefig(f'{output_dir}/fairness_metrics_comparison.png', dpi=300, bbox_inches='tight')
-    plt.close()
-    
-    # Figure 3: Group-wise Performance Heatmap
-    for task in tasks:
-        fig, ax = plt.subplots(figsize=(12, 8))
-        
-        # Prepare data for heatmap
-        heatmap_data = []
-        frontend_names = []
-        group_names = set()
-        
-        for frontend, frontend_results in results.items():
-            if task in frontend_results and 'group_metrics' in frontend_results[task]:
-                frontend_names.append(frontend)
-                group_metrics = frontend_results[task]['group_metrics']
-                
-                for group in group_metrics:
-                    group_names.add(group)
-        
-        group_names = sorted(list(group_names))
-        
-        for frontend in frontend_names:
-            row = []
-            for group in group_names:
-                if (frontend in results and task in results[frontend] and 
-                    'group_metrics' in results[frontend][task] and 
-                    group in results[frontend][task]['group_metrics']):
-                    row.append(results[frontend][task]['group_metrics'][group]['accuracy'])
-                else:
-                    row.append(0)
-            heatmap_data.append(row)
-        
-        if heatmap_data:
-            # Create heatmap
-            sns.heatmap(heatmap_data, annot=True, fmt='.3f', 
-                       xticklabels=group_names, yticklabels=frontend_names,
-                       cmap='YlOrRd', cbar_kws={'label': 'Accuracy'})
-            
-            plt.title(f'Group-wise Performance - {task.capitalize()}', fontsize=14)
-            plt.xlabel('Group', fontsize=12)
-            plt.ylabel('Frontend', fontsize=12)
-            plt.tight_layout()
-            plt.savefig(f'{output_dir}/groupwise_performance_{task}.png', dpi=300, bbox_inches='tight')
-            plt.close()
-    
-    print(f"\nVisualizations saved to {output_dir}/")
-
-
 # ============== MAIN EXECUTION ==============
 
 def main():
@@ -807,12 +672,6 @@ def main():
     
     print("Results saved to results/evaluation_results.json")
     
-    # Generate visualizations
-    print("\n5. Generating Visualizations...")
-    print("-"*40)
-    
-    create_visualizations(results)
-    
     # Print summary
     print("\n" + "="*60)
     print("EVALUATION COMPLETE")
@@ -827,11 +686,7 @@ def main():
                     print(f"  {task}: Acc={results[frontend][task]['overall_accuracy']:.4f}, "
                           f"WGS={results[frontend][task]['wgs']:.4f}")
     
-    print("\n✓ Real audio files processed")
-    print("✓ Actual predictions computed")
-    print("✓ Metrics calculated from experimental data")
-    print("✓ Figures generated from real results")
-    print("\nAll outputs saved in results/ and plots/ directories")
+    print("\nAll outputs saved in results/ directory")
 
 
 if __name__ == "__main__":
