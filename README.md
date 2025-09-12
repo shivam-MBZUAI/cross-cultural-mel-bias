@@ -6,7 +6,7 @@
 ## Abstract
 Modern audio systems universally employ mel-scale representations derived from 1940s Western psychoacoustic studies, potentially encoding cultural biases that create systematic performance disparities. We demonstrate that mel-scale features achieve 31.2% WER for tonal languages compared to 18.7% for non-tonal languages (12.5% absolute gap), and show 15.7% F1 degradation between Western and non-Western music. Alternative representations significantly reduce these disparities: LEAF reduces the speech gap by 34%, CQT achieves 52% reduction in music performance gaps, and ERB-scale filtering cuts disparities by 31% with only 1% computational overhead.
 
-## Key Contributions
+### 1. Contributions
 
 1. **Systematic evaluation** of 7 front-ends across 11 languages, 8 musical traditions, and 10 European cities
 2. **Demonstrating mel-scale bias**: 31.2% WER for tonal vs 18.7% for non-tonal languages (12.5% gap)
@@ -69,9 +69,7 @@ Modern audio systems universally employ mel-scale representations derived from 1
 - **Samples**: 100 recordings per city (10 per scene type)
 
 
-## Quick Start
-
-### Setup Environment
+### 2. Quick Start
 
 ```bash
 git clone https://github.com/shivam-MBZUAI/cross-cultural-mel-bias.git
