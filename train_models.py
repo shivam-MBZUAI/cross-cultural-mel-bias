@@ -148,7 +148,7 @@ class MelFilterbank(nn.Module):
 
 # ============== TRAINING FUNCTIONS ==============
 
-def load_music_data(data_dir='data/music', max_per_genre=None):
+def load_music_data(data_dir='../data/music', max_per_genre=None):
     """Load music classification data"""
     print("Loading music data...")
     
@@ -178,7 +178,7 @@ def load_music_data(data_dir='data/music', max_per_genre=None):
     return file_paths, labels, len(genres)
 
 
-def load_scene_data(data_dir='data/scenes', max_per_scene=None):
+def load_scene_data(data_dir='../data/scenes', max_per_scene=None):
     """Load scene classification data"""
     print("Loading scene data...")
     
@@ -207,7 +207,7 @@ def load_scene_data(data_dir='data/scenes', max_per_scene=None):
     return file_paths, labels, len(scenes)
 
 
-def load_speech_data(data_dir='data/speech', max_per_language=None):
+def load_speech_data(data_dir='../data/speech', max_per_language=None):
     """Load speech data for language classification"""
     print("Loading speech data...")
     
