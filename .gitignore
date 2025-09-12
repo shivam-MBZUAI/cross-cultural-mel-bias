@@ -23,6 +23,7 @@ wheels/
 # Data directories
 logs/
 validation/
+plots/
 
 # Environment
 .env
