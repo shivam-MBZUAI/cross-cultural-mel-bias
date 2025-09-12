@@ -1,0 +1,30 @@
+{
+    "experiment_config": {
+        "sample_rate": 22050,
+        "n_fft": 512,
+        "win_length": 551,
+        "hop_length": 220,
+        "n_mels": 40,
+        "n_filters": 40,
+        "f_min": 80.0,
+        "f_max": 11025.0,
+        "batch_size": 32,
+        "device": "auto",
+        "data_dir": "./data",
+        "results_dir": "./results",
+        "plots_dir": "./results/plots",
+        "models_dir": "./pretrained_models"
+    },
+    "dataset_config": {
+        "speech_languages": ["english", "mandarin", "spanish", "arabic", "hindi"],
+        "music_cultures": ["western", "hindustani", "carnatic", "turkish_makam", "arab_andalusian"],
+        "scene_regions": ["europe-1", "europe-2"],
+        "tasks": ["speech", "music", "scenes"]
+    },
+    "evaluation_config": {
+        "frontends": ["mel", "erb", "bark", "cqt", "leaf", "sincnet", "pcen"],
+        "run_all_experiments": true,
+        "save_intermediate": true,
+        "verbose": true
+    }
+}

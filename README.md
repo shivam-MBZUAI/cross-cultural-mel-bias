@@ -121,27 +121,6 @@ python download_datasets.py --all --output_dir /path/to/custom/data --hf_token $
 python download_datasets.py --help
 ```
 
-#### Dataset Details
-
-**SPEECH DATASETS:**
-- `commonvoice` - Mozilla Common Voice v17.0 multilingual speech (205 languages available)
-
-**MUSIC DATASETS:**
-- `gtzan` - GTZAN Genre Classification Dataset (1000 audio tracks, 10 genres)
-- `fma_small` - Free Music Archive Small subset (8,000 tracks)
-- `carnatic` - Carnatic music dataset from CompMusic project
-- `turkish_makam` - Turkish Makam music dataset
-- `hindustani` - Hindustani classical music dataset
-- `arab_andalusian` - Arab Andalusian classical music dataset
-
-**SCENE DATASETS:**
-- `tau_urban` - TAU Urban Acoustic Scenes 2020 dataset
-
-#### Target Languages
-
-**Tonal Languages (5)**: Vietnamese (vi), Thai (th), Mandarin Chinese (zh-CN), Punjabi (pa-IN), Cantonese (yue)  
-**Non-Tonal Languages (6)**: English (en), Spanish (es), German (de), French (fr), Italian (it), Dutch (nl)
-
 
 ### 3. Preprocess for Balanced Evaluation
 
@@ -185,7 +164,7 @@ python preprocess_datasets.py --all --seed 123
 python preprocess_datasets.py --all --force
 ```
 
-## Implemented Front-ends
+### 4. Implemented Front-ends
 
 All front-ends use identical CRNN backend (4 conv layers: 64-128-256-256 channels, 2-layer BiLSTM: 256 units, 5M total parameters):
 
@@ -197,44 +176,7 @@ All front-ends use identical CRNN backend (4 conv layers: 64-128-256-256 channel
 6. **LEAF**: 64 learnable Gabor filters (Zeghidour et al. 2021)
 7. **mel+PCEN**: Per-channel energy normalization (Wang et al. 2017)
 
-## Key Findings
-
-### The Mechanism of Bias (Section 2.3)
-
-The mel scale applies non-linear frequency warping:
-```
-ψ_mel(f) = 2595 log₁₀(1 + f/700)
-```
-
-At 300 Hz (critical for tones):
-- **Mel resolution**: ~35 Hz
-- **Required for tones**: ~3 Hz
-- **Resolution deficit**: >10×
-
-### LEAF's Adaptive Behavior (Figure 2)
-- Allocates **42% of filters to 80-500 Hz** for tonal languages
-- Only 23% for mel in same range
-- Data-driven discovery validates theoretical analysis
-
-### Language-Specific Improvements (Table 3)
-
-| Language | Tones | mel WER | LEAF WER | Improvement |
-|----------|-------|---------|----------|-------------|
-| Vietnamese | 6 | 35.2% | 26.9% | -23.6% |
-| Thai | 5 | 33.1% | 25.4% | -23.3% |
-| Cantonese | 6 | 34.0% | 26.5% | -22.1% |
-| Mandarin | 4 | 28.4% | 22.8% | -19.7% |
-| Punjabi | 3 | 30.5% | 24.8% | -18.7% |
-
-### Feature-Level Analysis (Table 2)
-
-| Feature | mel | ERB | LEAF | Δ |
-|---------|-----|-----|------|---|
-| **Tones (F0)** | 71.2% | 82.4% | 83.7% | +12.5% |
-| **Vowels** | 85.3% | 86.8% | 87.2% | +1.9% |
-| **Consonants** | 88.1% | 88.4% | 88.9% | +0.8% |
-
-## Running Complete Evaluation
+#### Running Complete Evaluation
 
 The complete evaluation pipeline is implemented in `frontends.py` and reproduces ALL experiments from the paper:
 
@@ -245,8 +187,6 @@ The complete evaluation pipeline is implemented in `frontends.py` and reproduces
 5. **Confusion matrix analysis** for tonal languages (Section 5.5)
 6. **Filter visualization and analysis** (Section 5.6)
 7. **Ablation studies** (Section 5.7)
-
-### Run Complete Evaluation
 
 ```bash
 # Run all experiments (requires processed data)

@@ -27,6 +27,8 @@ import pandas as pd
 from tqdm import tqdm
 from typing import Dict, List, Tuple, Optional, Union
 from dataclasses import dataclass, asdict, field
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend for server environments
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import seaborn as sns
@@ -48,7 +50,13 @@ if torch.cuda.is_available():
     torch.cuda.manual_seed(SEED)
 
 # Publication-quality plot settings
-plt.style.use('seaborn-v0_8-whitegrid')
+try:
+    plt.style.use('seaborn-v0_8-whitegrid')
+except:
+    try:
+        plt.style.use('seaborn-whitegrid')
+    except:
+        plt.style.use('default')
 sns.set_palette("husl")
 plt.rcParams.update({
     'figure.dpi': 100,
