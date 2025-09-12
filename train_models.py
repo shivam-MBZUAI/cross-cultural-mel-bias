@@ -357,7 +357,7 @@ def main():
     print("="*60)
     
     # Load data
-    file_paths, labels, num_classes = load_music_data(max_per_genre=100)
+    file_paths, labels, num_classes = load_music_data(max_per_genre=100000000000000)
     
     if len(file_paths) > 0:
         # Split data
@@ -402,7 +402,7 @@ def main():
     print("="*60)
     
     # Load data
-    file_paths, labels, num_classes = load_scene_data(max_per_scene=100)
+    file_paths, labels, num_classes = load_scene_data(max_per_scene=100000000000000)
     
     if len(file_paths) > 0:
         # Split data
@@ -447,7 +447,7 @@ def main():
     print("="*60)
     
     # Load data
-    file_paths, labels, num_classes = load_speech_data(max_per_language=100)
+    file_paths, labels, num_classes = load_speech_data(max_per_language=100000000000000)
     
     if len(file_paths) > 0:
         # Split data

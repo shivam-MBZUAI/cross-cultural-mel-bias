@@ -24,6 +24,7 @@ wheels/
 logs/
 validation/
 plots/
+processed_data/
 
 # Environment
 .env
@@ -48,7 +49,6 @@ Thumbs.db
 *.h5
 *.pkl
 *.model
-*.json
 
 # Temporary files
 *.tmp
