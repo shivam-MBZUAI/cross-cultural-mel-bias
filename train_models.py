@@ -12,6 +12,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 import torchaudio
+import librosa
 from pathlib import Path
 from tqdm import tqdm
 from sklearn.model_selection import train_test_split
@@ -39,9 +40,26 @@ class AudioDataset(Dataset):
         return len(self.file_paths)
     
     def __getitem__(self, idx):
-        # Load audio
+        # Load audio with better error handling
         audio_path = self.file_paths[idx]
-        waveform, sr = torchaudio.load(audio_path)
+        
+        try:
+            # Try torchaudio first (usually most reliable)
+            waveform, sr = torchaudio.load(audio_path)
+        except:
+            try:
+                # Fallback to librosa with audioread
+                import librosa
+                import audioread
+                waveform, sr = librosa.load(audio_path, sr=None, mono=False)
+                waveform = torch.from_numpy(waveform).float()
+                if waveform.dim() == 1:
+                    waveform = waveform.unsqueeze(0)
+            except:
+                # If all fails, return zeros (will be skipped in training)
+                print(f"Warning: Could not load {audio_path}, using silence")
+                waveform = torch.zeros(1, self.max_length)
+                sr = self.sample_rate
         
         # Resample if needed
         if sr != self.sample_rate:
@@ -357,7 +375,7 @@ def main():
     print("="*60)
     
     # Load data
-    file_paths, labels, num_classes = load_music_data(max_per_genre=100000000000000)
+    file_paths, labels, num_classes = load_music_data(max_per_genre=10000)
     
     if len(file_paths) > 0:
         # Split data
@@ -402,7 +420,7 @@ def main():
     print("="*60)
     
     # Load data
-    file_paths, labels, num_classes = load_scene_data(max_per_scene=100000000000000)
+    file_paths, labels, num_classes = load_scene_data(max_per_scene=10000)
     
     if len(file_paths) > 0:
         # Split data
@@ -447,7 +465,7 @@ def main():
     print("="*60)
     
     # Load data
-    file_paths, labels, num_classes = load_speech_data(max_per_language=100000000000000)
+    file_paths, labels, num_classes = load_speech_data(max_per_language=10000)
     
     if len(file_paths) > 0:
         # Split data
