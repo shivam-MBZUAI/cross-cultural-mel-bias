@@ -94,6 +94,8 @@ While the paper reports LEAF and SincNet results, these **learnable front-ends**
 
 3. **Reproducibility**: Fixed front-ends (Mel, ERB, Bark, CQT, PCEN) require no training and produce deterministic outputs, making results immediately reproducible. Learnable front-ends would require distributing multiple task-specific checkpoints and exact training configurations.
 
+**Note**: We plan to release the LEAF and SincNet implementations along with their pre-trained models after paper acceptance. These will be available in the same repository with appropriate pipelines.
+
 For researchers interested in learnable front-ends, we recommend training them end-to-end with your specific task following the original LEAF (Zeghidour et al., 2021) and SincNet (Ravanelli & Bengio, 2018) papers. The paper's Table 1 includes their full results for comparison.
 
 ## 5. Quick Start
