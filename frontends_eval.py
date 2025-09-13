@@ -595,21 +595,21 @@ def main():
     
     # Load music data
     print("\nLoading Music Classification Data...")
-    music_data = data_loader.load_music_data(max_samples=20)  # Reduced for faster testing
+    music_data = data_loader.load_music_data(max_samples=300)  # Reduced for faster testing
     if music_data['audio']:
         tasks_data['music'] = music_data
         print(f"Loaded {len(music_data['audio'])} music samples")
     
     # Load scene data
     print("\nLoading Scene Classification Data...")
-    scene_data = data_loader.load_scene_data(max_samples=20)
+    scene_data = data_loader.load_scene_data(max_samples=100)
     if scene_data['audio']:
         tasks_data['scene'] = scene_data
         print(f"Loaded {len(scene_data['audio'])} scene samples")
     
     # Load speech data
     print("\nLoading Speech Recognition Data...")
-    speech_data = data_loader.load_speech_data(max_samples=20)
+    speech_data = data_loader.load_speech_data(max_samples=2000)
     if speech_data['audio']:
         tasks_data['speech'] = speech_data
         print(f"Loaded {len(speech_data['audio'])} speech samples")
