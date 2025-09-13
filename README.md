@@ -160,26 +160,13 @@ python frontends_eval.py
 # 5. Save results to results/ directory
 ```
 
-### Expected Output
+## 5. FairAudioBench
 
-```
-results/
-├── evaluation_results.json           # Numerical results for implemented front-ends
-└── plots/
-    ├── performance_fairness_tradeoff.png
-    ├── fairness_metrics_comparison.png
-    ├── groupwise_performance_music.png
-    ├── groupwise_performance_scene.png
-    └── groupwise_performance_speech.png
-```
-
-## 6. FairAudioBench
-
-We introduce **FairAudioBench**, the first comprehensive benchmark for evaluating cross-cultural bias in audio systems present in file 'frontends_eval.py':
+We introduce **FairAudioBench**, the first comprehensive benchmark for evaluating cross-cultural bias in audio systems present in file 'preprocess_datasets.py' and 'frontends_eval.py':
 
 ### Components
 
-- **Curated Datasets**: Balanced evaluation splits across 11 languages, 8 musical traditions, 10 cities
-- **Evaluation Suite**: Automated computation of fairness metrics (WGS, Δ, ρ) with statistical significance
-- **Reference Implementations**: 5 fixed front-ends with matched architectures (5M params CRNN backend)
-- **Reproducible Pipeline**: Complete evaluation in single script
+- **Curated Datasets**: Balanced evaluation splits across 11 languages, 8 musical traditions, 10 cities ('preprocess_datasets.py')
+- **Evaluation Suite**: Automated computation of fairness metrics (WGS, Δ, ρ) with statistical significance ('frontends_eval.py')
+- **Reference Implementations**: 5 fixed front-ends with matched architectures (5M params CRNN backend) ('models folder')
+- **Reproducible Pipeline**: Complete evaluation in single script ('frontends_eval.py')
