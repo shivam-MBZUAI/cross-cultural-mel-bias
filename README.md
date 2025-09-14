@@ -1,4 +1,4 @@
-# CROSS-CULTURAL BIAS IN MEL-SCALE REPRESENTATIONS: EVIDENCE AND ALTERNATIVES FROM SPEECH AND MUSIC
+## CROSS-CULTURAL BIAS IN MEL-SCALE REPRESENTATIONS: EVIDENCE AND ALTERNATIVES FROM SPEECH AND MUSIC
 
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -64,7 +64,7 @@ Modern audio systems universally employ mel-scale representations derived from 1
   - [Carnatic](https://www.kaggle.com/datasets/desolationofsmaug/saraga-carnatic-music-dataset) (2380 recordings, 227 ragas)
   - [Turkish makam](https://zenodo.org/records/1283350/files/turkish_sarki_vocal_v2.0.zip?download=1) (6500 recordings, 155 makams)
   - [Arab-Andalusian](https://zenodo.org/records/1291776) (338 recordings, 11 mizans)
-- **Samples**: 300 recordings per tradition
+- **Samples**: 300 recordings per collection
 
 #### Acoustic Scenes [TAU Urban Acoustic Scenes 2020 Mobile](https://zenodo.org/records/3819968)
 - **Europe-1 (Northern)**: Helsinki, Stockholm, Amsterdam, London, Vienna
