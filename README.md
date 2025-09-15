@@ -156,5 +156,4 @@ We introduce **FairAudioBench**, the first comprehensive benchmark for evaluatin
 
 - **Curated Datasets**: Balanced evaluation splits across 11 languages, 8 musical traditions, 10 cities ('preprocess_datasets.py')
 - **Evaluation Suite**: Automated computation of fairness metrics (WGS, Δ, ρ) with statistical significance ('frontends_eval.py')
-- **Reference Implementations**: 5 fixed front-ends with matched architectures (5M params CRNN backend) ('models folder')
 - **Reproducible Pipeline**: Complete evaluation in single script ('frontends_eval.py')
