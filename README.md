@@ -139,9 +139,6 @@ python preprocess_datasets.py --data_dir /path/to/data --output_dir processed_da
 ### Running Experiments
 
 ```bash
-# Train models (required first)
-python train_models.py
-
 # Run complete evaluation pipeline
 python frontends_eval.py
 
