@@ -131,9 +131,9 @@ python preprocess_datasets.py --data_dir /path/to/data --output_dir processed_da
 #   --domain: Which domain to process [speech|music|scenes]
 
 # This creates balanced evaluation sets:
-#   - Speech: 2,000 samples per language (11 languages)
-#   - Music: 300 samples per tradition (6 traditions)
-#   - Scenes: 100 samples per region (2 regions)
+#   - Speech: Max 2,000 samples per language (11 languages)
+#   - Music: Max 300 samples per tradition (6 traditions)
+#   - Scenes: Max 100 samples per region (2 regions)
 ```
 
 ### Running Experiments
