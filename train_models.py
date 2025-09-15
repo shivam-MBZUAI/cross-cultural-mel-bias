@@ -250,9 +250,10 @@ class CRNN(nn.Module):
 # ============== AUDIO FRONT-ENDS ==============
 
 class MelFilterbank(nn.Module):
-    """Standard mel-scale filterbank"""
-    def __init__(self, sample_rate=16000, n_fft=512, n_mels=80, hop_length=160):
+    """Mel-scale filterbank front-end"""
+    def __init__(self, sample_rate=16000, n_fft=512, n_mels=40, hop_length=160):
         super().__init__()
+        self.n_mels = n_mels
         self.mel_scale = torchaudio.transforms.MelSpectrogram(
             sample_rate=sample_rate,
             n_fft=n_fft,
@@ -265,6 +266,171 @@ class MelFilterbank(nn.Module):
         log_mel = torch.log(mel_spec + 1e-9)
         return log_mel
 
+class ERBFilterbank(nn.Module):
+    """ERB-scale filterbank"""
+    def __init__(self, sample_rate=16000, n_filters=32, n_fft=512, hop_length=160):
+        super().__init__()
+        self.sample_rate = sample_rate
+        self.n_filters = n_filters
+        self.n_fft = n_fft
+        self.hop_length = hop_length
+        
+        # Create ERB filterbank
+        min_freq = 50
+        max_freq = sample_rate / 2
+        erb_freqs = self._erb_space(min_freq, max_freq, n_filters)
+        self.filterbank = self._make_erb_filters(erb_freqs, sample_rate, n_fft)
+    
+    def _erb_space(self, low_freq, high_freq, n_filters):
+        """Generate ERB-spaced frequencies"""
+        ear_q = 9.26449
+        min_bw = 24.7
+        
+        erb_low = (low_freq / ear_q) + min_bw
+        erb_high = (high_freq / ear_q) + min_bw
+        
+        erb_freqs = np.linspace(erb_low, erb_high, n_filters)
+        freqs = (erb_freqs - min_bw) * ear_q
+        return freqs
+    
+    def _make_erb_filters(self, center_freqs, sample_rate, n_fft):
+        """Create ERB filterbank matrix"""
+        n_freqs = n_fft // 2 + 1
+        freqs = np.linspace(0, sample_rate / 2, n_freqs)
+        
+        filterbank = np.zeros((len(center_freqs), n_freqs))
+        
+        for i, cf in enumerate(center_freqs):
+            erb_width = 24.7 * (0.00437 * cf + 1)
+            response = np.exp(-0.5 * ((freqs - cf) / (0.5 * erb_width)) ** 2)
+            filterbank[i] = response / response.sum()
+        
+        return torch.FloatTensor(filterbank)
+    
+    def forward(self, waveform):
+        # Compute STFT
+        stft = torch.stft(waveform, n_fft=self.n_fft, hop_length=self.hop_length, 
+                         return_complex=True)
+        magnitude = torch.abs(stft)
+        
+        # Apply ERB filterbank
+        erb_spec = torch.matmul(self.filterbank, magnitude)
+        log_erb = torch.log(erb_spec + 1e-9)
+        return log_erb
+
+class BarkFilterbank(nn.Module):
+    """Bark-scale filterbank"""
+    def __init__(self, sample_rate=16000, n_filters=24, n_fft=512, hop_length=160):
+        super().__init__()
+        self.sample_rate = sample_rate
+        self.n_filters = n_filters
+        self.n_fft = n_fft
+        self.hop_length = hop_length
+        
+        # Create Bark filterbank
+        max_bark = self._hz_to_bark(sample_rate / 2)
+        bark_points = np.linspace(0, max_bark, n_filters + 2)
+        hz_points = [self._bark_to_hz(bark) for bark in bark_points]
+        self.filterbank = self._make_bark_filters(hz_points, sample_rate, n_fft)
+    
+    def _hz_to_bark(self, freq):
+        """Convert Hz to Bark scale"""
+        return 13 * np.arctan(0.00076 * freq) + 3.5 * np.arctan((freq / 7500) ** 2)
+    
+    def _bark_to_hz(self, bark):
+        """Convert Bark to Hz"""
+        return 600 * np.sinh(bark / 4)
+    
+    def _make_bark_filters(self, hz_points, sample_rate, n_fft):
+        """Create Bark filterbank matrix"""
+        n_freqs = n_fft // 2 + 1
+        freqs = np.linspace(0, sample_rate / 2, n_freqs)
+        
+        filterbank = np.zeros((len(hz_points) - 2, n_freqs))
+        
+        for i in range(1, len(hz_points) - 1):
+            lower = hz_points[i - 1]
+            center = hz_points[i]
+            upper = hz_points[i + 1]
+            
+            # Triangular filter
+            for j, freq in enumerate(freqs):
+                if lower <= freq <= center:
+                    filterbank[i-1, j] = (freq - lower) / (center - lower)
+                elif center < freq <= upper:
+                    filterbank[i-1, j] = (upper - freq) / (upper - center)
+        
+        return torch.FloatTensor(filterbank)
+    
+    def forward(self, waveform):
+        # Compute STFT
+        stft = torch.stft(waveform, n_fft=self.n_fft, hop_length=self.hop_length,
+                         return_complex=True)
+        magnitude = torch.abs(stft)
+        
+        # Apply Bark filterbank
+        bark_spec = torch.matmul(self.filterbank, magnitude)
+        log_bark = torch.log(bark_spec + 1e-9)
+        return log_bark
+
+class CQTFrontend(nn.Module):
+    """Constant-Q Transform frontend"""
+    def __init__(self, sample_rate=16000, hop_length=160, n_bins=84):
+        super().__init__()
+        self.sample_rate = sample_rate
+        self.hop_length = hop_length
+        self.n_bins = n_bins
+        self.fmin = 50
+    
+    def forward(self, waveform):
+        # Convert to numpy for librosa
+        if isinstance(waveform, torch.Tensor):
+            waveform = waveform.cpu().numpy()
+        
+        # Compute CQT
+        cqt = librosa.cqt(waveform, sr=self.sample_rate, hop_length=self.hop_length,
+                         n_bins=self.n_bins, fmin=self.fmin)
+        cqt_mag = np.abs(cqt)
+        log_cqt = np.log(cqt_mag + 1e-9)
+        
+        return torch.FloatTensor(log_cqt)
+
+class PCEN(nn.Module):
+    """Per-Channel Energy Normalization"""
+    def __init__(self, alpha=0.98, delta=2.0, r=0.5, s=0.025, eps=1e-6):
+        super().__init__()
+        self.alpha = alpha
+        self.delta = delta
+        self.r = r
+        self.s = s
+        self.eps = eps
+    
+    def forward(self, x):
+        # Compute smoothed version
+        smooth = torch.zeros_like(x)
+        smooth[:, :, 0] = x[:, :, 0]
+        
+        for t in range(1, x.shape[-1]):
+            smooth[:, :, t] = (1 - self.s) * smooth[:, :, t-1] + self.s * x[:, :, t]
+        
+        # Apply PCEN
+        pcen = (x / (smooth + self.eps) ** self.alpha + self.delta) ** self.r - self.delta ** self.r
+        return pcen
+
+class MelPCEN(nn.Module):
+    """Mel + PCEN frontend"""
+    def __init__(self, sample_rate=16000, n_fft=512, n_mels=40, hop_length=160):
+        super().__init__()
+        self.n_mels = n_mels
+        self.mel = MelFilterbank(sample_rate, n_fft, n_mels, hop_length)
+        self.pcen = PCEN()
+    
+    def forward(self, waveform):
+        mel_spec = self.mel(waveform)
+        # Apply PCEN to mel spectrogram (not log mel)
+        mel_linear = torch.exp(mel_spec)
+        pcen_spec = self.pcen(mel_linear)
+        return pcen_spec
 
 # ============== TRAINING FUNCTIONS ==============
 
@@ -450,178 +616,188 @@ def train_model(model, train_loader, val_loader, num_epochs=30, learning_rate=0.
     
     return model, history, best_val_acc
 
+def get_frontend_configs():
+    """Get all frontend configurations matching the paper specifications"""
+    configs = {
+        'Mel': {
+            'class': MelFilterbank,
+            'params': {'n_mels': 40},
+            'input_dim': 40
+        },
+        'ERB': {
+            'class': ERBFilterbank,
+            'params': {'n_filters': 32},
+            'input_dim': 32
+        },
+        'Bark': {
+            'class': BarkFilterbank,
+            'params': {'n_filters': 24},
+            'input_dim': 24
+        },
+        'CQT': {
+            'class': CQTFrontend,
+            'params': {'n_bins': 84},
+            'input_dim': 84
+        },
+        'Mel_PCEN': {  # Changed from Mel+PCEN to Mel_PCEN for file naming
+            'class': MelPCEN,
+            'params': {'n_mels': 40},
+            'input_dim': 40
+        }
+    }
+    return configs
+
+def train_frontend_models(frontend_name, frontend_config, tasks_data, 
+                         batch_size=32, num_epochs=30, learning_rate=0.001, device='cuda'):
+    """Train models for a specific frontend across all tasks"""
+    
+    print(f"\n{'='*60}")
+    print(f"TRAINING MODELS FOR {frontend_name} FRONTEND")
+    print(f"{'='*60}")
+    
+    # Initialize frontend
+    frontend_class = frontend_config['class']
+    frontend_params = frontend_config['params']
+    input_dim = frontend_config['input_dim']
+    frontend = frontend_class(**frontend_params)
+    
+    print(f"Frontend: {frontend_name}")
+    print(f"Input dimension: {input_dim}")
+    
+    results = {}
+    
+    # Train model for each task
+    for task_name, (file_paths, labels, num_classes) in tasks_data.items():
+        if len(file_paths) == 0:
+            print(f"⚠️  No data for {task_name}, skipping...")
+            continue
+            
+        print(f"\n--- Training {task_name} model with {frontend_name} ---")
+        
+        # Split data
+        X_train, X_val, y_train, y_val = train_test_split(
+            file_paths, labels, test_size=0.2, random_state=42, stratify=labels
+        )
+        
+        print(f"Training samples: {len(X_train)}")
+        print(f"Validation samples: {len(X_val)}")
+        print(f"Classes: {num_classes}")
+        
+        # Determine max length based on task
+        max_length = 5 if task_name == 'speech' else 10
+        
+        # Create datasets
+        train_dataset = AudioDataset(X_train, y_train, frontend, max_length_seconds=max_length)
+        val_dataset = AudioDataset(X_val, y_val, frontend, max_length_seconds=max_length)
+        
+        # Create dataloaders
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, 
+                                shuffle=True, num_workers=2)
+        val_loader = DataLoader(val_dataset, batch_size=batch_size, 
+                              shuffle=False, num_workers=2)
+        
+        # Create model with correct input dimension
+        model = CRNN(input_dim=input_dim, num_classes=num_classes)
+        
+        # Train model
+        model, history, best_acc = train_model(
+            model, train_loader, val_loader,
+            num_epochs=num_epochs, learning_rate=learning_rate, device=device
+        )
+        
+        # Save model with frontend-specific name
+        model_path = f'models/crnn_{task_name}_{frontend_name}.pth'
+        torch.save(model.state_dict(), model_path)
+        print(f"✓ Model saved: {model_path} (Best Acc: {best_acc:.4f})")
+        
+        # Save history
+        history_path = f'models/{task_name}_{frontend_name}_history.json'
+        with open(history_path, 'w') as f:
+            json.dump(history, f, indent=2)
+        
+        results[task_name] = {
+            'best_acc': best_acc,
+            'model_path': model_path
+        }
+    
+    return results
 
 def main():
     print("="*60)
-    print("TRAINING CRNN MODELS FOR AUDIO TASKS")
+    print("TRAINING FRONTEND-SPECIFIC CRNN MODELS")
+    print("Matching Paper Specifications")
     print("="*60)
     
-    # Check for GPU
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"\nUsing device: {device}")
     
     # Create models directory
     os.makedirs('models', exist_ok=True)
     
-    # Initialize frontend (using Mel for training all models)
-    frontend = MelFilterbank()
+    # Load all task data first
+    print("\n1. Loading all datasets...")
+    print("-"*40)
+    
+    tasks_data = {}
+    
+    # Load music data
+    file_paths, labels, num_classes = load_music_data(max_per_genre=500)  # Reduced for faster training
+    if len(file_paths) > 0:
+        tasks_data['music'] = (file_paths, labels, num_classes)
+    
+    # Load scene data  
+    file_paths, labels, num_classes = load_scene_data(max_per_scene=500)
+    if len(file_paths) > 0:
+        tasks_data['scene'] = (file_paths, labels, num_classes)
+    
+    # Load speech data
+    file_paths, labels, num_classes = load_speech_data(max_per_language=500)
+    if len(file_paths) > 0:
+        tasks_data['speech'] = (file_paths, labels, num_classes)
+    
+    # Get frontend configurations
+    frontend_configs = get_frontend_configs()
     
     # Training parameters
     batch_size = 32
     num_epochs = 30
     learning_rate = 0.001
     
-    # ============== TRAIN MUSIC MODEL ==============
+    # Train models for each frontend
+    print("\n2. Training models for each frontend...")
+    print("-"*40)
+    
+    all_results = {}
+    
+    for frontend_name, frontend_config in frontend_configs.items():
+        results = train_frontend_models(
+            frontend_name, 
+            frontend_config, 
+            tasks_data,
+            batch_size=batch_size,
+            num_epochs=num_epochs,
+            learning_rate=learning_rate,
+            device=device
+        )
+        all_results[frontend_name] = results
+    
+    # Save summary
+    with open('models/training_summary.json', 'w') as f:
+        json.dump(all_results, f, indent=2)
+    
+    # Print summary
     print("\n" + "="*60)
-    print("TRAINING MUSIC CLASSIFICATION MODEL")
+    print("TRAINING COMPLETE - SUMMARY")
     print("="*60)
     
-    # Load data
-    file_paths, labels, num_classes = load_music_data(max_per_genre=10000)
+    for frontend_name, results in all_results.items():
+        print(f"\n{frontend_name}:")
+        for task_name, task_results in results.items():
+            print(f"  {task_name}: Acc={task_results['best_acc']:.4f}")
     
-    if len(file_paths) > 0:
-        # Split data
-        X_train, X_val, y_train, y_val = train_test_split(
-            file_paths, labels, test_size=0.2, random_state=42, stratify=labels
-        )
-        
-        print(f"\nTraining set: {len(X_train)} samples")
-        print(f"Validation set: {len(X_val)} samples")
-        print(f"Number of classes: {num_classes}")
-        
-        # Create datasets
-        train_dataset = AudioDataset(X_train, y_train, frontend, max_length_seconds=10)
-        val_dataset = AudioDataset(X_val, y_val, frontend, max_length_seconds=10)
-        
-        # Create dataloaders
-        train_loader = DataLoader(train_dataset, batch_size=batch_size, 
-                                 shuffle=True, num_workers=2)
-        val_loader = DataLoader(val_dataset, batch_size=batch_size, 
-                               shuffle=False, num_workers=2)
-        
-        # Create and train model
-        model = CRNN(input_dim=80, num_classes=num_classes)
-        model, history, best_acc = train_model(
-            model, train_loader, val_loader, 
-            num_epochs=num_epochs, learning_rate=learning_rate, device=device
-        )
-        
-        # Save model
-        torch.save(model.state_dict(), 'models/crnn_music.pth')
-        print(f"\n✓ Music model saved (Best Val Acc: {best_acc:.4f})")
-        
-        # Save training history
-        with open('models/music_history.json', 'w') as f:
-            json.dump(history, f, indent=2)
-    else:
-        print("⚠️  No music data found, skipping music model training")
-    
-    # ============== TRAIN SCENE MODEL ==============
-    print("\n" + "="*60)
-    print("TRAINING SCENE CLASSIFICATION MODEL")
-    print("="*60)
-    
-    # Load data
-    file_paths, labels, num_classes = load_scene_data(max_per_scene=10000)
-    
-    if len(file_paths) > 0:
-        # Split data
-        X_train, X_val, y_train, y_val = train_test_split(
-            file_paths, labels, test_size=0.2, random_state=42, stratify=labels
-        )
-        
-        print(f"\nTraining set: {len(X_train)} samples")
-        print(f"Validation set: {len(X_val)} samples")
-        print(f"Number of classes: {num_classes}")
-        
-        # Create datasets
-        train_dataset = AudioDataset(X_train, y_train, frontend, max_length_seconds=10)
-        val_dataset = AudioDataset(X_val, y_val, frontend, max_length_seconds=10)
-        
-        # Create dataloaders
-        train_loader = DataLoader(train_dataset, batch_size=batch_size,
-                                 shuffle=True, num_workers=2)
-        val_loader = DataLoader(val_dataset, batch_size=batch_size,
-                               shuffle=False, num_workers=2)
-        
-        # Create and train model
-        model = CRNN(input_dim=80, num_classes=num_classes)
-        model, history, best_acc = train_model(
-            model, train_loader, val_loader,
-            num_epochs=num_epochs, learning_rate=learning_rate, device=device
-        )
-        
-        # Save model
-        torch.save(model.state_dict(), 'models/crnn_scene.pth')
-        print(f"\n✓ Scene model saved (Best Val Acc: {best_acc:.4f})")
-        
-        # Save training history
-        with open('models/scene_history.json', 'w') as f:
-            json.dump(history, f, indent=2)
-    else:
-        print("⚠️  No scene data found, skipping scene model training")
-    
-    # ============== TRAIN SPEECH MODEL ==============
-    print("\n" + "="*60)
-    print("TRAINING SPEECH LANGUAGE CLASSIFICATION MODEL")
-    print("="*60)
-    
-    # Load data
-    file_paths, labels, num_classes = load_speech_data(max_per_language=10000)
-    
-    if len(file_paths) > 0:
-        # Split data
-        X_train, X_val, y_train, y_val = train_test_split(
-            file_paths, labels, test_size=0.2, random_state=42, stratify=labels
-        )
-        
-        print(f"\nTraining set: {len(X_train)} samples")
-        print(f"Validation set: {len(X_val)} samples")
-        print(f"Number of classes: {num_classes}")
-        
-        # Create datasets
-        train_dataset = AudioDataset(X_train, y_train, frontend, max_length_seconds=5)
-        val_dataset = AudioDataset(X_val, y_val, frontend, max_length_seconds=5)
-        
-        # Create dataloaders
-        train_loader = DataLoader(train_dataset, batch_size=batch_size,
-                                 shuffle=True, num_workers=2)
-        val_loader = DataLoader(val_dataset, batch_size=batch_size,
-                               shuffle=False, num_workers=2)
-        
-        # Create and train model
-        model = CRNN(input_dim=80, num_classes=num_classes)
-        model, history, best_acc = train_model(
-            model, train_loader, val_loader,
-            num_epochs=num_epochs, learning_rate=learning_rate, device=device
-        )
-        
-        # Save model
-        torch.save(model.state_dict(), 'models/crnn_speech.pth')
-        print(f"\n✓ Speech model saved (Best Val Acc: {best_acc:.4f})")
-        
-        # Save training history
-        with open('models/speech_history.json', 'w') as f:
-            json.dump(history, f, indent=2)
-    else:
-        print("⚠️  No speech data found, skipping speech model training")
-    
-    # ============== SUMMARY ==============
-    print("\n" + "="*60)
-    print("TRAINING COMPLETE")
-    print("="*60)
-    
-    print("\nModels saved in 'models/' directory:")
-    if os.path.exists('models/crnn_music.pth'):
-        print("  ✓ crnn_music.pth")
-    if os.path.exists('models/crnn_scene.pth'):
-        print("  ✓ crnn_scene.pth")
-    if os.path.exists('models/crnn_speech.pth'):
-        print("  ✓ crnn_speech.pth")
-    
-    print("\nYou can now run the evaluation pipeline:")
-    print("  python run_experiments.py")
-
+    print("\nAll models saved in 'models/' directory")
+    print("Model naming convention: crnn_[task]_[frontend].pth")
+    print("\nReady for evaluation with run_experiments.py")
 
 if __name__ == "__main__":
     main()

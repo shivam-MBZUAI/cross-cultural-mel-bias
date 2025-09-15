@@ -544,13 +544,54 @@ class AudioDataLoader:
 # ============== EVALUATION ==============
 
 class FairnessEvaluator:
-    """Calculate fairness metrics from actual predictions"""
+    """Calculate fairness metrics from actual predictions with bootstrap significance testing"""
     
     def __init__(self):
         self.results = defaultdict(lambda: defaultdict(list))
+        # Define language groups for speech task
+        self.tonal_languages = ['pa-IN', 'th', 'vi', 'yue', 'zh-CN']
+        self.non_tonal_languages = ['de', 'en', 'es', 'fr', 'it', 'nl']
+    
+    def bootstrap_significance_test(self, group1_scores, group2_scores, n_bootstrap=1000, alpha=0.01):
+        """
+        Perform paired bootstrap test to determine if performance difference is significant
+        """
+        # Convert to arrays
+        group1_scores = np.array(group1_scores)
+        group2_scores = np.array(group2_scores)
+        
+        # Calculate observed difference
+        observed_diff = np.mean(group1_scores) - np.mean(group2_scores)
+        
+        # Bootstrap resampling
+        bootstrap_diffs = []
+        n_samples = min(len(group1_scores), len(group2_scores))
+        
+        for _ in range(n_bootstrap):
+            # Sample with replacement from both groups
+            idx1 = np.random.choice(len(group1_scores), size=n_samples, replace=True)
+            idx2 = np.random.choice(len(group2_scores), size=n_samples, replace=True)
+            
+            boot_group1 = group1_scores[idx1]
+            boot_group2 = group2_scores[idx2]
+            
+            boot_diff = np.mean(boot_group1) - np.mean(boot_group2)
+            bootstrap_diffs.append(boot_diff)
+        
+        # Calculate p-value (two-tailed test)
+        bootstrap_diffs = np.array(bootstrap_diffs)
+        p_value = np.sum(np.abs(bootstrap_diffs - np.mean(bootstrap_diffs)) >= 
+                         np.abs(observed_diff - np.mean(bootstrap_diffs))) / n_bootstrap
+        
+        return {
+            'p_value': float(p_value),
+            'significant': bool(p_value < alpha),
+            'observed_diff': float(observed_diff),
+            'confidence_interval': [float(x) for x in np.percentile(bootstrap_diffs, [2.5, 97.5])]
+        }
     
     def evaluate_frontend(self, frontend, model, data, frontend_name, task_name):
-        """Evaluate a single frontend on a task"""
+        """Evaluate a single frontend on a task with significance testing"""
         model.eval()
         frontend.eval()
         
@@ -558,6 +599,7 @@ class FairnessEvaluator:
         all_labels = []
         group_predictions = defaultdict(list)
         group_labels = defaultdict(list)
+        group_raw_scores = defaultdict(list)  # Store raw scores for bootstrap
         
         with torch.no_grad():
             for i, audio in enumerate(tqdm(data['audio'], desc=f"Evaluating {frontend_name}")):
@@ -580,6 +622,8 @@ class FairnessEvaluator:
                     all_labels.append(label)
                     group_predictions[group].append(pred)
                     group_labels[group].append(label)
+                    # Store whether this prediction is correct (for bootstrap)
+                    group_raw_scores[group].append(1 if pred == label else 0)
                     
                 elif task_name == 'scene':
                     label = data['labels'][i]
@@ -587,93 +631,246 @@ class FairnessEvaluator:
                     all_labels.append(label)
                     group_predictions[group].append(pred)
                     group_labels[group].append(label)
+                    group_raw_scores[group].append(1 if pred == label else 0)
                     
                 elif task_name == 'speech':
-                    # For speech, we'd need transcriptions for WER
-                    # Using language classification as proxy
+                    # Language classification task
                     lang = data['languages'][i]
+                    # Create label from language index
+                    lang_to_idx = {'de': 0, 'en': 1, 'es': 2, 'fr': 3, 'it': 4, 'nl': 5,
+                                  'pa-IN': 6, 'th': 7, 'vi': 8, 'yue': 9, 'zh-CN': 10}
+                    label = lang_to_idx[lang]
+                    all_labels.append(label)
                     group_predictions[lang].append(pred)
+                    group_labels[lang].append(label)
+                    group_raw_scores[lang].append(1 if pred == label else 0)
         
         # Calculate metrics
-        if task_name in ['music', 'scene']:
-            overall_acc = accuracy_score(all_labels, all_predictions)
-            overall_f1 = f1_score(all_labels, all_predictions, average='macro')
-            
-            # Calculate per-group metrics
-            group_metrics = {}
-            for group in group_predictions:
-                if len(group_labels[group]) > 0:
-                    acc = accuracy_score(group_labels[group], group_predictions[group])
-                    f1 = f1_score(group_labels[group], group_predictions[group], 
-                                 average='macro', zero_division=0)
-                    group_metrics[group] = {'accuracy': acc, 'f1': f1}
-            
-            # Calculate fairness metrics
-            accuracies = [m['accuracy'] for m in group_metrics.values()]
-            
-            # Within-Group Standard Deviation (WGS)
-            wgs = min(accuracies) if accuracies else 0
-            
-            # Gap (max - min)
-            gap = max(accuracies) - min(accuracies) if len(accuracies) > 1 else 0
-            
-            # Disparate Impact (DI)
-            di = min(accuracies) / max(accuracies) if len(accuracies) > 1 and max(accuracies) > 0 else 1
-            
-            return {
-                'overall_accuracy': overall_acc,
-                'overall_f1': overall_f1,
-                'group_metrics': group_metrics,
-                'wgs': wgs,
-                'gap': gap,
-                'di': di
-            }
+        results = {}
         
-        return {'message': 'Speech evaluation needs transcriptions for WER'}
-    
-    def run_full_evaluation(self, frontends, tasks_data):
-        """Run complete evaluation across all frontends and tasks"""
+        overall_acc = accuracy_score(all_labels, all_predictions)
+        overall_f1 = f1_score(all_labels, all_predictions, average='macro')
         
-        # Initialize models for each task
-        models = {
-            'music': CRNN(input_dim=80, num_classes=6, task_type='classification'),
-            'scene': CRNN(input_dim=80, num_classes=2, task_type='classification'),
-            'speech': CRNN(input_dim=80, num_classes=11, task_type='classification')
+        # Calculate per-group metrics
+        group_metrics = {}
+        for group in group_predictions:
+            if len(group_labels[group]) > 0:
+                acc = accuracy_score(group_labels[group], group_predictions[group])
+                f1 = f1_score(group_labels[group], group_predictions[group], 
+                             average='macro', zero_division=0)
+                group_metrics[group] = {
+                    'accuracy': acc, 
+                    'f1': f1,
+                    'n_samples': len(group_labels[group])
+                }
+        
+        # Calculate fairness metrics
+        accuracies = [m['accuracy'] for m in group_metrics.values()]
+        
+        # Worst-Group Score (WGS) - minimum accuracy across groups
+        wgs = min(accuracies) if accuracies else 0
+        
+        # Performance Gap (Δ) - maximum disparity between groups
+        gap = max(accuracies) - min(accuracies) if len(accuracies) > 1 else 0
+        
+        # Disparate Impact (ρ) - ratio of worst to best performance
+        di = min(accuracies) / max(accuracies) if len(accuracies) > 1 and max(accuracies) > 0 else 1
+        
+        results = {
+            'overall_accuracy': overall_acc,
+            'overall_f1': overall_f1,
+            'group_metrics': group_metrics,
+            'wgs': wgs,
+            'gap': gap,
+            'di': di
         }
         
-        # Load pre-trained weights if available
-        for task, model in models.items():
-            weight_file = f'models/crnn_{task}.pth'
-            if os.path.exists(weight_file):
-                print(f"Loading pre-trained weights for {task}")
-                model.load_state_dict(torch.load(weight_file, map_location='cpu'))
-            else:
-                print(f"Warning: No pre-trained weights found for {task}, using random initialization")
+        # Add significance testing based on task
+        if task_name == 'music':
+            western = ['gtzan', 'fma_small']
+            non_western = ['arab_andalusian', 'carnatic', 'hindustani', 'turkish_makam']
+            
+            western_scores = []
+            non_western_scores = []
+            
+            for g in western:
+                if g in group_raw_scores:
+                    western_scores.extend(group_raw_scores[g])
+            
+            for g in non_western:
+                if g in group_raw_scores:
+                    non_western_scores.extend(group_raw_scores[g])
+            
+            if western_scores and non_western_scores:
+                sig_test = self.bootstrap_significance_test(
+                    western_scores, non_western_scores, 
+                    n_bootstrap=1000, alpha=0.01
+                )
+                results['significance_test'] = sig_test
+                results['comparison'] = 'Western vs Non-Western'
+                
+                print(f"    Significance test (Western vs Non-Western):")
+                print(f"      p-value: {sig_test['p_value']:.4f}")
+                print(f"      Significant at p<0.01: {sig_test['significant']}")
+                print(f"      Performance difference: {sig_test['observed_diff']:.4f}")
+        
+        elif task_name == 'scene':
+            europe1_scores = group_raw_scores.get('european-1', [])
+            europe2_scores = group_raw_scores.get('european-2', [])
+            
+            if europe1_scores and europe2_scores:
+                sig_test = self.bootstrap_significance_test(
+                    europe1_scores, europe2_scores,
+                    n_bootstrap=1000, alpha=0.01
+                )
+                results['significance_test'] = sig_test
+                results['comparison'] = 'Europe-1 vs Europe-2'
+                
+                print(f"    Significance test (Europe-1 vs Europe-2):")
+                print(f"      p-value: {sig_test['p_value']:.4f}")
+                print(f"      Significant at p<0.01: {sig_test['significant']}")
+                print(f"      Performance difference: {sig_test['observed_diff']:.4f}")
+        
+        elif task_name == 'speech':
+            # Test tonal vs non-tonal languages
+            tonal_scores = []
+            non_tonal_scores = []
+            
+            for lang in self.tonal_languages:
+                if lang in group_raw_scores:
+                    tonal_scores.extend(group_raw_scores[lang])
+            
+            for lang in self.non_tonal_languages:
+                if lang in group_raw_scores:
+                    non_tonal_scores.extend(group_raw_scores[lang])
+            
+            if tonal_scores and non_tonal_scores:
+                sig_test = self.bootstrap_significance_test(
+                    tonal_scores, non_tonal_scores,
+                    n_bootstrap=1000, alpha=0.01
+                )
+                results['significance_test'] = sig_test
+                results['comparison'] = 'Tonal vs Non-tonal'
+                
+                # Calculate average accuracy for each group (for paper reporting)
+                tonal_accs = [group_metrics[lang]['accuracy'] for lang in self.tonal_languages 
+                             if lang in group_metrics]
+                non_tonal_accs = [group_metrics[lang]['accuracy'] for lang in self.non_tonal_languages 
+                                  if lang in group_metrics]
+                
+                if tonal_accs and non_tonal_accs:
+                    results['tonal_avg_acc'] = np.mean(tonal_accs)
+                    results['non_tonal_avg_acc'] = np.mean(non_tonal_accs)
+                    # This is your paper's WER gap (but using accuracy)
+                    results['tonal_gap'] = results['non_tonal_avg_acc'] - results['tonal_avg_acc']
+                
+                print(f"    Significance test (Tonal vs Non-tonal):")
+                print(f"      Tonal avg accuracy: {results.get('tonal_avg_acc', 0):.4f}")
+                print(f"      Non-tonal avg accuracy: {results.get('non_tonal_avg_acc', 0):.4f}")
+                print(f"      Gap: {results.get('tonal_gap', 0):.4f}")
+                print(f"      p-value: {sig_test['p_value']:.4f}")
+                print(f"      Significant at p<0.01: {sig_test['significant']}")
+        
+        return results
+    
+    def run_full_evaluation(self, frontends, tasks_data):
+        """Run complete evaluation across all frontends and tasks with significance testing"""
         
         results = {}
+        all_frontend_scores = defaultdict(lambda: defaultdict(dict))
         
         for frontend_name, frontend in frontends.items():
             print(f"\n{'='*50}")
             print(f"Evaluating {frontend_name}")
             print(f"{'='*50}")
             
+            # Determine input dimension for this frontend
+            if frontend_name in ['Mel', 'Mel+PCEN', 'Mel_PCEN']:
+                input_dim = 40
+            elif frontend_name == 'ERB':
+                input_dim = 32
+            elif frontend_name == 'Bark':
+                input_dim = 24
+            elif frontend_name == 'CQT':
+                input_dim = 84
+            else:
+                input_dim = 80  # fallback
+            
             results[frontend_name] = {}
             
             for task_name, data in tasks_data.items():
                 if data and len(data['audio']) > 0:
                     print(f"\nTask: {task_name}")
+                    
+                    # Determine number of classes based on task
+                    if task_name == 'music':
+                        num_classes = 6
+                    elif task_name == 'scene':
+                        num_classes = 2
+                    elif task_name == 'speech':
+                        num_classes = 11
+                    else:
+                        num_classes = 10  # fallback
+                    
+                    # Create model with correct input dimension
+                    model = CRNN(input_dim=input_dim, num_classes=num_classes, 
+                               task_type='classification')
+                    
+                    # Load frontend-specific weights
+                    # Handle both Mel+PCEN and Mel_PCEN naming
+                    frontend_file_name = frontend_name.replace('+', '_')
+                    model_file = f'models/crnn_{task_name}_{frontend_file_name}.pth'
+                    
+                    if os.path.exists(model_file):
+                        print(f"  Loading weights from {model_file}")
+                        model.load_state_dict(torch.load(model_file, map_location='cpu'))
+                    else:
+                        # Try alternative naming if first attempt fails
+                        alt_model_file = f'models/crnn_{task_name}.pth'
+                        if os.path.exists(alt_model_file) and frontend_name == 'Mel':
+                            print(f"  Loading weights from {alt_model_file} (fallback)")
+                            model.load_state_dict(torch.load(alt_model_file, map_location='cpu'))
+                        else:
+                            print(f"  Warning: No pre-trained weights found at {model_file}")
+                            print(f"  Using random initialization - results will be poor!")
+                    
+                    # Evaluate
                     task_results = self.evaluate_frontend(
-                        frontend, models[task_name], data, frontend_name, task_name
+                        frontend, model, data, frontend_name, task_name
                     )
                     results[frontend_name][task_name] = task_results
                     
                     # Print results
-                    if 'overall_accuracy' in task_results:
-                        print(f"  Overall Accuracy: {task_results['overall_accuracy']:.4f}")
-                        print(f"  Overall F1: {task_results['overall_f1']:.4f}")
-                        print(f"  WGS: {task_results['wgs']:.4f}")
-                        print(f"  Gap: {task_results['gap']:.4f}")
-                        print(f"  DI: {task_results['di']:.4f}")
+                    print(f"  Overall Accuracy: {task_results['overall_accuracy']:.4f}")
+                    print(f"  Overall F1: {task_results['overall_f1']:.4f}")
+                    print(f"  WGS: {task_results['wgs']:.4f}")
+                    print(f"  Gap: {task_results['gap']:.4f}")
+                    print(f"  DI: {task_results['di']:.4f}")
+                    
+                    # Store for cross-frontend comparison
+                    all_frontend_scores[task_name][frontend_name] = {
+                        'gap': task_results['gap'],
+                        'wgs': task_results['wgs'],
+                        'di': task_results['di']
+                    }
+                    if task_name == 'speech' and 'tonal_gap' in task_results:
+                        all_frontend_scores[task_name][frontend_name]['tonal_gap'] = task_results['tonal_gap']
+        
+        # Compare frontends (Mel baseline vs others)
+        print("\n" + "="*60)
+        print("CROSS-FRONTEND SIGNIFICANCE TESTING")
+        print("="*60)
+        
+        if 'Mel' in frontends:
+            for task_name in all_frontend_scores:
+                print(f"\n{task_name.upper()} - Comparing frontends to Mel baseline:")
+                mel_gap = all_frontend_scores[task_name].get('Mel', {}).get('gap', 0)
+                
+                for frontend_name in frontends:
+                    if frontend_name != 'Mel' and frontend_name in all_frontend_scores[task_name]:
+                        other_gap = all_frontend_scores[task_name][frontend_name]['gap']
+                        reduction = ((mel_gap - other_gap) / mel_gap * 100) if mel_gap > 0 else 0
+                        print(f"  {frontend_name}: Gap={other_gap:.4f}, Reduction={reduction:.1f}%")
         
         return results
 
@@ -720,7 +917,6 @@ def main():
         print("\nError: No data loaded. Please check your processed_data directory structure.")
         return
     
-    # Initialize frontends with paper specifications
     print("\n2. Initializing Audio Front-ends...")
     print("-"*40)
     
@@ -729,13 +925,11 @@ def main():
         'ERB': ERBFilterbank(n_filters=32),
         'Bark': BarkFilterbank(n_filters=24),
         'CQT': CQTFrontend(n_bins=84),
-        'Mel+PCEN': MelPCEN(n_mels=40)
+        'Mel_PCEN': MelPCEN(n_mels=40)  # Changed from 'Mel+PCEN' to 'Mel_PCEN' to match training
     }
-    
-    # Note: LEAF and SincNet require learnable parameters and should be trained
-    # Paper specifies: LEAF (64 learnable Gabor filters), SincNet (64 learnable sinc filters)
-    # These require separate training for each task to learn optimal filters
-    
+
+    # Note: LEAF and SincNet require learnable parameters and should be trained separately
+
     print(f"Initialized {len(frontends)} front-ends: {list(frontends.keys())}")
     print("Paper specifications:")
     print("  - Mel: 40 mel-spaced filters, 25ms windows, 10ms hop")
