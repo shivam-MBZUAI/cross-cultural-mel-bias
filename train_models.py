@@ -91,8 +91,9 @@ class CRNN(nn.Module):
     def __init__(self, input_dim=80, num_classes=10, task_type='classification'):
         super().__init__()
         self.task_type = task_type
+        self.input_dim = input_dim  # Store for later use
         
-        # Frequency-aware CNN blocks with residual connections
+        # Frequency-aware CNN blocks
         self.conv1a = nn.Conv2d(1, 64, kernel_size=(3, 3), padding=1)
         self.conv1b = nn.Conv2d(64, 64, kernel_size=(3, 3), padding=1)
         self.bn1 = nn.BatchNorm2d(64)
@@ -114,11 +115,16 @@ class CRNN(nn.Module):
         self.time_pool = nn.MaxPool2d((1, 2))  # Pool time only
         self.both_pool = nn.MaxPool2d((2, 2))  # Pool both
         
-        # Attention mechanism for frequency dimension
+        # Calculate actual frequency dimension after pooling
+        # After: both_pool -> freq_pool -> time_pool -> both_pool
+        # Frequency dimension: input_dim / 2 / 2 / 1 / 2 = input_dim / 8
+        freq_dim_after_pool = input_dim // 8
+        
+        # Attention mechanism for frequency dimension - FIX THE DIMENSIONS
         self.freq_attention = nn.Sequential(
-            nn.Linear(input_dim // 16, input_dim // 32),
+            nn.Linear(freq_dim_after_pool * 256, 128),  # Fixed input size
             nn.ReLU(),
-            nn.Linear(input_dim // 32, input_dim // 16),
+            nn.Linear(128, freq_dim_after_pool),  # Output per frequency bin
             nn.Sigmoid()
         )
         
@@ -127,7 +133,7 @@ class CRNN(nn.Module):
         self.dropout_rnn = nn.Dropout(0.3)
         
         # Calculate RNN input size
-        rnn_input_size = (input_dim // 16) * 256
+        rnn_input_size = freq_dim_after_pool * 256
         
         # Multi-scale temporal modeling
         self.lstm1 = nn.LSTM(rnn_input_size, 256, num_layers=1,
@@ -148,7 +154,6 @@ class CRNN(nn.Module):
                 nn.Linear(256, num_classes)
             )
         else:
-            # For other tasks like regression
             self.output_head = nn.Linear(512, num_classes)
         
         # Learnable positional encoding for time dimension
@@ -167,16 +172,16 @@ class CRNN(nn.Module):
         conv1 = self.conv1b(conv1)
         conv1 = self.bn1(conv1)
         conv1 = torch.relu(conv1)
-        x1 = self.both_pool(conv1)  # Pool both freq and time
+        x1 = self.both_pool(conv1)  # Frequency: input_dim/2
         x1 = self.dropout_conv(x1)
         
-        # Block 2: Mid-level features with different pooling
+        # Block 2: Mid-level features
         conv2 = self.conv2a(x1)
         conv2 = torch.relu(conv2)
         conv2 = self.conv2b(conv2)
         conv2 = self.bn2(conv2)
         conv2 = torch.relu(conv2)
-        x2 = self.freq_pool(conv2)  # Pool frequency more aggressively
+        x2 = self.freq_pool(conv2)  # Frequency: input_dim/4
         x2 = self.dropout_conv(x2)
         
         # Block 3: High-level features
@@ -185,54 +190,51 @@ class CRNN(nn.Module):
         conv3 = self.conv3b(conv3)
         conv3 = self.bn3(conv3)
         conv3 = torch.relu(conv3)
-        x3 = self.time_pool(conv3)  # Pool time dimension
+        x3 = self.time_pool(conv3)  # Frequency: input_dim/4 (time pooling only)
         x3 = self.dropout_conv(x3)
         
-        # Block 4: Final CNN features with residual
+        # Block 4: Final CNN features
         conv4 = self.conv4a(x3)
         conv4 = torch.relu(conv4)
         conv4 = self.conv4b(conv4)
         conv4 = self.bn4(conv4)
         conv4 = torch.relu(conv4)
-        x4 = self.both_pool(conv4)
+        x4 = self.both_pool(conv4)  # Frequency: input_dim/8
         x4 = self.dropout_conv(x4)
         
-        # Reshape for RNN: (batch, time, features)
+        # Get dimensions
         batch, channels, freq, time = x4.size()
         
         # Apply frequency attention
-        freq_features = x4.mean(dim=3)  # Average over time
-        freq_weights = self.freq_attention(freq_features.view(batch, -1))
-        freq_weights = freq_weights.view(batch, 1, freq, 1)
+        freq_features = x4.mean(dim=3)  # Average over time: (batch, channels, freq)
+        freq_features_flat = freq_features.view(batch, -1)  # (batch, channels*freq)
+        freq_weights = self.freq_attention(freq_features_flat)  # (batch, freq)
+        freq_weights = freq_weights.view(batch, 1, freq, 1)  # Reshape for broadcasting
         x4 = x4 * freq_weights  # Apply attention weights
         
         # Prepare for RNN
         x4 = x4.permute(0, 3, 1, 2)  # (batch, time, channels, freq)
         x4 = x4.reshape(batch, time, -1)  # (batch, time, features)
         
-        # Add positional encoding
+        # Add positional encoding (fix dimension)
         if time <= self.positional_encoding.size(1):
-            x4 = x4 + self.positional_encoding[:, :time, :].expand_as(x4[:, :, :1])
+            pos_enc = self.positional_encoding[:, :time, :].expand(batch, time, 1)
+            x4 = x4 + pos_enc
         
-        # Two-layer bidirectional LSTM with residual
-        lstm_out1, (h1, c1) = self.lstm1(x4)
+        # Two-layer bidirectional LSTM
+        lstm_out1, _ = self.lstm1(x4)
         lstm_out1 = self.ln1(lstm_out1)
         lstm_out1 = self.dropout_rnn(lstm_out1)
         
-        lstm_out2, (h2, c2) = self.lstm2(lstm_out1)
+        lstm_out2, _ = self.lstm2(lstm_out1)
         lstm_out2 = self.ln2(lstm_out2)
         
         # Combine different temporal aggregations
-        # 1. Global average pooling
         avg_pool = torch.mean(lstm_out2, dim=1)
-        
-        # 2. Max pooling
         max_pool = torch.max(lstm_out2, dim=1)[0]
-        
-        # 3. Last hidden state
         last_hidden = lstm_out2[:, -1, :]
         
-        # 4. Attention-weighted average
+        # Attention-weighted average
         attention_weights = torch.softmax(lstm_out2.mean(dim=2, keepdim=True), dim=1)
         attention_pool = (lstm_out2 * attention_weights).sum(dim=1)
         
@@ -266,7 +268,7 @@ class MelFilterbank(nn.Module):
 
 # ============== TRAINING FUNCTIONS ==============
 
-def load_music_data(data_dir='../data/music', max_per_genre=None):
+def load_music_data(data_dir='../ICASSP/data/music', max_per_genre=None):
     """Load music classification data"""
     print("Loading music data...")
     
@@ -296,7 +298,7 @@ def load_music_data(data_dir='../data/music', max_per_genre=None):
     return file_paths, labels, len(genres)
 
 
-def load_scene_data(data_dir='../data/scenes', max_per_scene=None):
+def load_scene_data(data_dir='../ICASSP/data/scenes', max_per_scene=None):
     """Load scene classification data"""
     print("Loading scene data...")
     
@@ -325,7 +327,7 @@ def load_scene_data(data_dir='../data/scenes', max_per_scene=None):
     return file_paths, labels, len(scenes)
 
 
-def load_speech_data(data_dir='../data/speech', max_per_language=None):
+def load_speech_data(data_dir='../ICASSP/data/speech', max_per_language=None):
     """Load speech data for language classification"""
     print("Loading speech data...")
     
