@@ -146,8 +146,6 @@ python frontends_eval.py
 # 1. Load your processed audio data
 # 2. Evaluate 5 implemented front-ends on all 3 tasks  
 # 3. Calculate fairness metrics (WGS, Gap, DI)
-# 4. Generate visualizations
-# 5. Save results to results/ directory
 ```
 
 ## 5. FairAudioBench
