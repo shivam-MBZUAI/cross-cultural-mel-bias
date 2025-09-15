@@ -87,62 +87,162 @@ class AudioDataset(Dataset):
 # ============== MODEL ARCHITECTURES ==============
 
 class CRNN(nn.Module):
-    """CRNN model for all audio tasks"""
-    
-    def __init__(self, input_dim=80, num_classes=10, dropout_rate=0.3):
+    """CRNN with better spectro-temporal modeling"""
+    def __init__(self, input_dim=80, num_classes=10, task_type='classification'):
         super().__init__()
+        self.task_type = task_type
         
-        # CNN layers
-        self.conv1 = nn.Conv2d(1, 32, kernel_size=(3, 3), padding=1)
-        self.bn1 = nn.BatchNorm2d(32)
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=(3, 3), padding=1)
-        self.bn2 = nn.BatchNorm2d(64)
-        self.conv3 = nn.Conv2d(64, 128, kernel_size=(3, 3), padding=1)
-        self.bn3 = nn.BatchNorm2d(128)
+        # Frequency-aware CNN blocks with residual connections
+        self.conv1a = nn.Conv2d(1, 64, kernel_size=(3, 3), padding=1)
+        self.conv1b = nn.Conv2d(64, 64, kernel_size=(3, 3), padding=1)
+        self.bn1 = nn.BatchNorm2d(64)
         
-        self.pool = nn.MaxPool2d(2, 2)
-        self.dropout = nn.Dropout(dropout_rate)
+        self.conv2a = nn.Conv2d(64, 128, kernel_size=(3, 3), padding=1)
+        self.conv2b = nn.Conv2d(128, 128, kernel_size=(3, 3), padding=1)
+        self.bn2 = nn.BatchNorm2d(128)
         
-        # Calculate RNN input size (after 3 pooling layers)
-        rnn_input_size = (input_dim // 8) * 128
+        self.conv3a = nn.Conv2d(128, 256, kernel_size=(3, 3), padding=1)
+        self.conv3b = nn.Conv2d(256, 256, kernel_size=(3, 3), padding=1)
+        self.bn3 = nn.BatchNorm2d(256)
         
-        # RNN layers
-        self.lstm = nn.LSTM(rnn_input_size, 256, num_layers=2,
-                           batch_first=True, bidirectional=True, dropout=dropout_rate)
+        self.conv4a = nn.Conv2d(256, 256, kernel_size=(3, 3), padding=1)
+        self.conv4b = nn.Conv2d(256, 256, kernel_size=(3, 3), padding=1)
+        self.bn4 = nn.BatchNorm2d(256)
         
-        # Output layers
-        self.fc = nn.Linear(512, num_classes)
-        self.activation = nn.LogSoftmax(dim=1)
-    
+        # Pooling strategies
+        self.freq_pool = nn.MaxPool2d((2, 1))  # Pool frequency only
+        self.time_pool = nn.MaxPool2d((1, 2))  # Pool time only
+        self.both_pool = nn.MaxPool2d((2, 2))  # Pool both
+        
+        # Attention mechanism for frequency dimension
+        self.freq_attention = nn.Sequential(
+            nn.Linear(input_dim // 16, input_dim // 32),
+            nn.ReLU(),
+            nn.Linear(input_dim // 32, input_dim // 16),
+            nn.Sigmoid()
+        )
+        
+        # Dropout with different rates
+        self.dropout_conv = nn.Dropout2d(0.2)
+        self.dropout_rnn = nn.Dropout(0.3)
+        
+        # Calculate RNN input size
+        rnn_input_size = (input_dim // 16) * 256
+        
+        # Multi-scale temporal modeling
+        self.lstm1 = nn.LSTM(rnn_input_size, 256, num_layers=1,
+                            batch_first=True, bidirectional=True)
+        self.lstm2 = nn.LSTM(512, 256, num_layers=1,
+                            batch_first=True, bidirectional=True)
+        
+        # Layer normalization for LSTM outputs
+        self.ln1 = nn.LayerNorm(512)
+        self.ln2 = nn.LayerNorm(512)
+        
+        # Task-specific heads
+        if task_type == 'classification':
+            self.output_head = nn.Sequential(
+                nn.Linear(512, 256),
+                nn.ReLU(),
+                nn.Dropout(0.5),
+                nn.Linear(256, num_classes)
+            )
+        else:
+            # For other tasks like regression
+            self.output_head = nn.Linear(512, num_classes)
+        
+        # Learnable positional encoding for time dimension
+        self.positional_encoding = nn.Parameter(torch.randn(1, 1000, 1))
+        
     def forward(self, x):
-        # Add channel dimension if needed
+        # Input shape: (batch, freq_bins, time_frames) or (batch, 1, freq, time)
         if len(x.shape) == 3:
             x = x.unsqueeze(1)
         
-        # CNN feature extraction
-        x = self.pool(torch.relu(self.bn1(self.conv1(x))))
-        x = self.dropout(x)
+        batch_size = x.size(0)
         
-        x = self.pool(torch.relu(self.bn2(self.conv2(x))))
-        x = self.dropout(x)
+        # Block 1: Extract low-level features
+        conv1 = self.conv1a(x)
+        conv1 = torch.relu(conv1)
+        conv1 = self.conv1b(conv1)
+        conv1 = self.bn1(conv1)
+        conv1 = torch.relu(conv1)
+        x1 = self.both_pool(conv1)  # Pool both freq and time
+        x1 = self.dropout_conv(x1)
         
-        x = self.pool(torch.relu(self.bn3(self.conv3(x))))
-        x = self.dropout(x)
+        # Block 2: Mid-level features with different pooling
+        conv2 = self.conv2a(x1)
+        conv2 = torch.relu(conv2)
+        conv2 = self.conv2b(conv2)
+        conv2 = self.bn2(conv2)
+        conv2 = torch.relu(conv2)
+        x2 = self.freq_pool(conv2)  # Pool frequency more aggressively
+        x2 = self.dropout_conv(x2)
         
-        # Reshape for RNN: (batch, channels, freq, time) -> (batch, time, features)
-        batch, channels, freq, time = x.size()
-        x = x.permute(0, 3, 1, 2)
-        x = x.reshape(batch, time, -1)
+        # Block 3: High-level features
+        conv3 = self.conv3a(x2)
+        conv3 = torch.relu(conv3)
+        conv3 = self.conv3b(conv3)
+        conv3 = self.bn3(conv3)
+        conv3 = torch.relu(conv3)
+        x3 = self.time_pool(conv3)  # Pool time dimension
+        x3 = self.dropout_conv(x3)
         
-        # RNN processing
-        x, _ = self.lstm(x)
+        # Block 4: Final CNN features with residual
+        conv4 = self.conv4a(x3)
+        conv4 = torch.relu(conv4)
+        conv4 = self.conv4b(conv4)
+        conv4 = self.bn4(conv4)
+        conv4 = torch.relu(conv4)
+        x4 = self.both_pool(conv4)
+        x4 = self.dropout_conv(x4)
         
-        # Global average pooling
-        x = torch.mean(x, dim=1)
+        # Reshape for RNN: (batch, time, features)
+        batch, channels, freq, time = x4.size()
         
-        # Classification
-        x = self.fc(x)
-        return x
+        # Apply frequency attention
+        freq_features = x4.mean(dim=3)  # Average over time
+        freq_weights = self.freq_attention(freq_features.view(batch, -1))
+        freq_weights = freq_weights.view(batch, 1, freq, 1)
+        x4 = x4 * freq_weights  # Apply attention weights
+        
+        # Prepare for RNN
+        x4 = x4.permute(0, 3, 1, 2)  # (batch, time, channels, freq)
+        x4 = x4.reshape(batch, time, -1)  # (batch, time, features)
+        
+        # Add positional encoding
+        if time <= self.positional_encoding.size(1):
+            x4 = x4 + self.positional_encoding[:, :time, :].expand_as(x4[:, :, :1])
+        
+        # Two-layer bidirectional LSTM with residual
+        lstm_out1, (h1, c1) = self.lstm1(x4)
+        lstm_out1 = self.ln1(lstm_out1)
+        lstm_out1 = self.dropout_rnn(lstm_out1)
+        
+        lstm_out2, (h2, c2) = self.lstm2(lstm_out1)
+        lstm_out2 = self.ln2(lstm_out2)
+        
+        # Combine different temporal aggregations
+        # 1. Global average pooling
+        avg_pool = torch.mean(lstm_out2, dim=1)
+        
+        # 2. Max pooling
+        max_pool = torch.max(lstm_out2, dim=1)[0]
+        
+        # 3. Last hidden state
+        last_hidden = lstm_out2[:, -1, :]
+        
+        # 4. Attention-weighted average
+        attention_weights = torch.softmax(lstm_out2.mean(dim=2, keepdim=True), dim=1)
+        attention_pool = (lstm_out2 * attention_weights).sum(dim=1)
+        
+        # Combine all pooling strategies
+        combined = (avg_pool + max_pool + last_hidden + attention_pool) / 4
+        
+        # Task-specific output
+        output = self.output_head(combined)
+        
+        return output
 
 
 # ============== AUDIO FRONT-ENDS ==============
