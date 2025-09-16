@@ -406,15 +406,24 @@ class PCEN(nn.Module):
         self.eps = eps
     
     def forward(self, x):
-        # Compute smoothed version
+        # Handle both 2D and 3D inputs
+        if x.dim() == 2:
+            # Add batch dimension if missing
+            x = x.unsqueeze(0)
+            squeeze_batch = True
+        else:
+            squeeze_batch = False
+        
         smooth = torch.zeros_like(x)
         smooth[:, :, 0] = x[:, :, 0]
         
         for t in range(1, x.shape[-1]):
             smooth[:, :, t] = (1 - self.s) * smooth[:, :, t-1] + self.s * x[:, :, t]
         
-        # Apply PCEN
-        pcen = (x / (smooth + self.eps) ** self.alpha + self.delta) ** self.r - self.delta ** self.r
+        pcen = (x / (smooth + self.eps) ** self.alpha + self.delta) ** self.r - self.delta ** self.r    
+        if squeeze_batch:
+            pcen = pcen.squeeze(0)
+        
         return pcen
 
 class MelPCEN(nn.Module):
@@ -427,10 +436,11 @@ class MelPCEN(nn.Module):
     
     def forward(self, waveform):
         mel_spec = self.mel(waveform)
-        # Apply PCEN to mel spectrogram (not log mel)
         mel_linear = torch.exp(mel_spec)
         pcen_spec = self.pcen(mel_linear)
-        return pcen_spec
+        log_pcen = torch.log(pcen_spec + 1e-9)
+        return log_pcen
+
 
 # ============== TRAINING FUNCTIONS ==============
 
@@ -639,7 +649,7 @@ def get_frontend_configs():
             'params': {'n_bins': 84},
             'input_dim': 84
         },
-        'Mel_PCEN': {  # Changed from Mel+PCEN to Mel_PCEN for file naming
+        'Mel_PCEN': {
             'class': MelPCEN,
             'params': {'n_mels': 40},
             'input_dim': 40
