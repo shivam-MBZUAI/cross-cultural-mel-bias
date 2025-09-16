@@ -186,7 +186,14 @@ class PCEN(nn.Module):
         self.eps = eps
     
     def forward(self, x):
-        # Compute smoothed version
+        # Handle both 2D and 3D inputs
+        if x.dim() == 2:
+            # Add batch dimension if missing
+            x = x.unsqueeze(0)
+            squeeze_batch = True
+        else:
+            squeeze_batch = False
+        
         smooth = torch.zeros_like(x)
         smooth[:, :, 0] = x[:, :, 0]
         
@@ -195,22 +202,25 @@ class PCEN(nn.Module):
         
         # Apply PCEN
         pcen = (x / (smooth + self.eps) ** self.alpha + self.delta) ** self.r - self.delta ** self.r
+        if squeeze_batch:
+            pcen = pcen.squeeze(0)
+        
         return pcen
-
 
 class MelPCEN(nn.Module):
     """Mel + PCEN frontend"""
-    def __init__(self, sample_rate=16000, n_fft=512, n_mels=80, hop_length=160):
+    def __init__(self, sample_rate=16000, n_fft=512, n_mels=40, hop_length=160):
         super().__init__()
+        self.n_mels = n_mels
         self.mel = MelFilterbank(sample_rate, n_fft, n_mels, hop_length)
         self.pcen = PCEN()
     
     def forward(self, waveform):
         mel_spec = self.mel(waveform)
-        # Apply PCEN to mel spectrogram (not log mel)
         mel_linear = torch.exp(mel_spec)
         pcen_spec = self.pcen(mel_linear)
-        return pcen_spec
+        log_pcen = torch.log(pcen_spec + 1e-9)
+        return log_pcen
 
 
 # ============== CRNN MODEL ==============
