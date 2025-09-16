@@ -8,7 +8,7 @@ Modern audio systems universally employ mel-scale representations derived from 1
 
 ## 1. Contributions
 
-1. **Systematic evaluation** of seven audio front-ends across 11 languages, 8 musical traditions, and 10 European cities
+1. **Systematic evaluation** of seven audio front-ends across 11 languages, 6 musical collections, and 10 European cities
 2. **Demonstrating mel-scale bias**: 31.2% WER for tonal vs 18.7% for non-tonal languages (12.5% gap)
 3. **Revealing critical frequencies**: 200-500 Hz where mel resolution is insufficient for tonal languages
 4. **Showing alternatives work**: CQT (52% music gap reduction), ERB (31% across domains with minimal overhead)
