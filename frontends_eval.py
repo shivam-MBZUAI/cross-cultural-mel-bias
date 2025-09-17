@@ -391,7 +391,7 @@ class CRNN(nn.Module):
 class AudioDataLoader:
     """Load and process audio files from processed_data directory"""
     
-    def __init__(self, data_dir='processed_data', sample_rate=16000):
+    def __init__(self, data_dir='../ICASSP/data', sample_rate=16000):
         self.data_dir = Path(data_dir)
         self.sample_rate = sample_rate
         self.audio_cache = {}
@@ -564,7 +564,8 @@ class FairnessEvaluator:
     
     def bootstrap_significance_test(self, group1_scores, group2_scores, n_bootstrap=1000, alpha=0.01):
         """
-        Perform paired bootstrap test to determine if performance difference is significant
+        Perform bootstrap test to determine if performance difference is significant
+        Uses the percentile method for hypothesis testing
         """
         # Convert to arrays
         group1_scores = np.array(group1_scores)
@@ -573,31 +574,51 @@ class FairnessEvaluator:
         # Calculate observed difference
         observed_diff = np.mean(group1_scores) - np.mean(group2_scores)
         
-        # Bootstrap resampling
+        # Method 1: Permutation-based bootstrap
+        # Under null hypothesis, the two groups are exchangeable
+        combined_scores = np.concatenate([group1_scores, group2_scores])
+        n1 = len(group1_scores)
+        n2 = len(group2_scores)
+        
         bootstrap_diffs = []
-        n_samples = min(len(group1_scores), len(group2_scores))
         
         for _ in range(n_bootstrap):
-            # Sample with replacement from both groups
-            idx1 = np.random.choice(len(group1_scores), size=n_samples, replace=True)
-            idx2 = np.random.choice(len(group2_scores), size=n_samples, replace=True)
+            # Shuffle the combined data
+            np.random.shuffle(combined_scores)
             
-            boot_group1 = group1_scores[idx1]
-            boot_group2 = group2_scores[idx2]
+            # Split into two groups of original sizes
+            perm_group1 = combined_scores[:n1]
+            perm_group2 = combined_scores[n1:n1+n2]
             
-            boot_diff = np.mean(boot_group1) - np.mean(boot_group2)
-            bootstrap_diffs.append(boot_diff)
+            # Calculate difference
+            perm_diff = np.mean(perm_group1) - np.mean(perm_group2)
+            bootstrap_diffs.append(perm_diff)
+        
+        bootstrap_diffs = np.array(bootstrap_diffs)
         
         # Calculate p-value (two-tailed test)
-        bootstrap_diffs = np.array(bootstrap_diffs)
-        p_value = np.sum(np.abs(bootstrap_diffs - np.mean(bootstrap_diffs)) >= 
-                         np.abs(observed_diff - np.mean(bootstrap_diffs))) / n_bootstrap
+        # Count how many permuted differences are as extreme or more extreme than observed
+        p_value = np.sum(np.abs(bootstrap_diffs) >= np.abs(observed_diff)) / n_bootstrap
+        
+        # Also calculate confidence interval using the standard bootstrap
+        # (resampling from each group separately)
+        standard_bootstrap_diffs = []
+        for _ in range(n_bootstrap):
+            # Sample with replacement from each group
+            boot_group1 = np.random.choice(group1_scores, size=len(group1_scores), replace=True)
+            boot_group2 = np.random.choice(group2_scores, size=len(group2_scores), replace=True)
+            
+            boot_diff = np.mean(boot_group1) - np.mean(boot_group2)
+            standard_bootstrap_diffs.append(boot_diff)
+        
+        standard_bootstrap_diffs = np.array(standard_bootstrap_diffs)
         
         return {
             'p_value': float(p_value),
             'significant': bool(p_value < alpha),
             'observed_diff': float(observed_diff),
-            'confidence_interval': [float(x) for x in np.percentile(bootstrap_diffs, [2.5, 97.5])]
+            'confidence_interval': [float(x) for x in np.percentile(standard_bootstrap_diffs, [0.5, 99.5])],  # 99% CI for alpha=0.01
+            'effect_size': float(observed_diff / np.std(combined_scores)) if np.std(combined_scores) > 0 else 0  # Cohen's d
         }
     
     def evaluate_frontend(self, frontend, model, data, frontend_name, task_name):
