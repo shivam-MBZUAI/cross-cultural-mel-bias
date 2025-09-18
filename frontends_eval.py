@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Complete Audio Front-End Experimental Pipeline
-Processes real audio files through pre-trained models and calculates actual metrics
+Complete Audio Front-End Experimental Pipeline with Multi-Run Significance Testing
+Processes real audio files through pre-trained models and validates results across multiple runs
 """
 
 import os
@@ -15,6 +15,8 @@ from pathlib import Path
 from tqdm import tqdm
 from collections import defaultdict
 from sklearn.metrics import accuracy_score, f1_score, confusion_matrix
+from scipy import stats
+import matplotlib.pyplot as plt
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -804,8 +806,15 @@ class FairnessEvaluator:
         
         return results
     
-    def run_full_evaluation(self, frontends, tasks_data):
+    def run_full_evaluation(self, frontends, tasks_data, run_seed=None):
         """Run complete evaluation across all frontends and tasks with significance testing"""
+        
+        if run_seed is not None:
+            # Set seeds for reproducibility
+            np.random.seed(run_seed)
+            torch.manual_seed(run_seed)
+            if torch.cuda.is_available():
+                torch.cuda.manual_seed_all(run_seed)
         
         results = {}
         all_frontend_scores = defaultdict(lambda: defaultdict(dict))
@@ -906,46 +915,50 @@ class FairnessEvaluator:
         return results
 
 
-# ============== MAIN EXECUTION ==============
+# ============== MULTI-RUN EVALUATION ==============
 
-def main():
-    print("="*60)
-    print("AUDIO FRONT-END BIAS EVALUATION PIPELINE")
-    print("Processing Real Audio Files Through Pre-trained Models")
-    print("="*60)
+def run_multi_run_evaluation(n_runs=5):
+    """
+    Run the entire experiment multiple times with different random seeds
+    to test if bias findings are statistically significant and reproducible
+    """
+    print("="*70)
+    print("MULTI-RUN AUDIO FRONT-END BIAS EVALUATION")
+    print(f"Running {n_runs} independent experiments for statistical validation")
+    print("="*70)
     
     # Initialize data loader
     data_loader = AudioDataLoader()
     
-    # Load datasets
+    # Load datasets once (same data for all runs)
     print("\n1. Loading Audio Data...")
     print("-"*40)
     
     tasks_data = {}
     
-    # Load music data
+    # Load music data (reduced samples for faster multi-run testing)
     print("\nLoading Music Classification Data...")
-    music_data = data_loader.load_music_data(max_samples=300)  # Reduced for faster testing
+    music_data = data_loader.load_music_data(max_samples=100)  # Reduced for multi-run
     if music_data['audio']:
         tasks_data['music'] = music_data
         print(f"Loaded {len(music_data['audio'])} music samples")
     
     # Load scene data
     print("\nLoading Scene Classification Data...")
-    scene_data = data_loader.load_scene_data(max_samples=100)
+    scene_data = data_loader.load_scene_data(max_samples=50)
     if scene_data['audio']:
         tasks_data['scene'] = scene_data
         print(f"Loaded {len(scene_data['audio'])} scene samples")
     
     # Load speech data
     print("\nLoading Speech Recognition Data...")
-    speech_data = data_loader.load_speech_data(max_samples=2000)
+    speech_data = data_loader.load_speech_data(max_samples=100)
     if speech_data['audio']:
         tasks_data['speech'] = speech_data
         print(f"Loaded {len(speech_data['audio'])} speech samples")
     
     if not tasks_data:
-        print("\nError: No data loaded. Please check your processed_data directory structure.")
+        print("\nError: No data loaded. Please check your data directory structure.")
         return
     
     print("\n2. Initializing Audio Front-ends...")
@@ -956,65 +969,383 @@ def main():
         'ERB': ERBFilterbank(n_filters=32),
         'Bark': BarkFilterbank(n_filters=24),
         'CQT': CQTFrontend(n_bins=84),
-        'Mel_PCEN': MelPCEN(n_mels=40)  # Changed from 'Mel+PCEN' to 'Mel_PCEN' to match training
+        'Mel_PCEN': MelPCEN(n_mels=40)
     }
-
-    # Note: LEAF and SincNet require learnable parameters and should be trained separately
-
+    
     print(f"Initialized {len(frontends)} front-ends: {list(frontends.keys())}")
-    print("Paper specifications:")
-    print("  - Mel: 40 mel-spaced filters, 25ms windows, 10ms hop")
-    print("  - ERB: 32 ERB-spaced filters")
-    print("  - Bark: 24 critical bands")
-    print("  - CQT: 84 bins (7 octaves × 12 bins/octave)")
-    print("  - Mel+PCEN: Per-channel energy normalization")
     
-    # Run evaluation
-    print("\n3. Running Evaluation on Real Audio...")
+    # Storage for results across runs
+    all_runs_results = []
+    
+    # Run multiple experiments
+    print("\n3. Running Multi-Run Evaluation...")
     print("-"*40)
     
-    evaluator = FairnessEvaluator()
-    results = evaluator.run_full_evaluation(frontends, tasks_data)
+    for run_idx in range(n_runs):
+        print(f"\n{'='*60}")
+        print(f"RUN {run_idx + 1}/{n_runs} (seed={run_idx})")
+        print(f"{'='*60}")
+        
+        # Run evaluation with specific seed
+        evaluator = FairnessEvaluator()
+        run_results = evaluator.run_full_evaluation(frontends, tasks_data, run_seed=run_idx)
+        all_runs_results.append(run_results)
+        
+        # Save individual run results
+        os.makedirs('results/multi_run', exist_ok=True)
+        with open(f'results/multi_run/run_{run_idx}_results.json', 'w') as f:
+            json.dump(run_results, f, indent=2, default=str)
     
-    # Save results
-    print("\n4. Saving Results...")
-    print("-"*40)
+    # Aggregate results across runs
+    print("\n" + "="*70)
+    print("AGGREGATING MULTI-RUN RESULTS")
+    print("="*70)
     
-    os.makedirs('results', exist_ok=True)
+    aggregated_results = aggregate_multirun_results(all_runs_results)
     
-    # Save detailed results as JSON
-    results_serializable = {}
-    for frontend, frontend_results in results.items():
-        results_serializable[frontend] = {}
-        for task, task_results in frontend_results.items():
-            if isinstance(task_results, dict):
-                results_serializable[frontend][task] = {
-                    k: float(v) if isinstance(v, (np.float32, np.float64)) else v
-                    for k, v in task_results.items()
-                    if k != 'group_metrics'  # Skip detailed group metrics for JSON
-                }
+    # Perform cross-run significance testing
+    print("\n" + "="*70)
+    print("CROSS-RUN STATISTICAL SIGNIFICANCE TESTING")
+    print("="*70)
     
-    with open('results/evaluation_results.json', 'w') as f:
-        json.dump(results_serializable, f, indent=2)
+    significance_results = test_multirun_significance(aggregated_results)
     
-    print("Results saved to results/evaluation_results.json")
+    # Generate final report
+    generate_multirun_report(aggregated_results, significance_results, n_runs)
     
-    # Print summary
-    print("\n" + "="*60)
-    print("EVALUATION COMPLETE")
-    print("="*60)
+    # Create visualizations
+    plot_multirun_results(aggregated_results)
     
-    print("\nSummary of Results:")
-    for frontend in frontends.keys():
-        print(f"\n{frontend}:")
-        for task in tasks_data.keys():
-            if frontend in results and task in results[frontend]:
-                if 'overall_accuracy' in results[frontend][task]:
-                    print(f"  {task}: Acc={results[frontend][task]['overall_accuracy']:.4f}, "
-                          f"WGS={results[frontend][task]['wgs']:.4f}")
+    print("\n" + "="*70)
+    print("MULTI-RUN EVALUATION COMPLETE")
+    print("="*70)
+    print("\nAll results saved in results/multi_run/ directory")
+    print("Check multirun_report.txt for detailed statistical analysis")
     
-    print("\nAll outputs saved in results/ directory")
+    return aggregated_results, significance_results
+
+
+def aggregate_multirun_results(all_runs_results):
+    """Aggregate results across multiple runs"""
+    aggregated = {}
+    
+    for frontend in all_runs_results[0].keys():
+        aggregated[frontend] = {}
+        
+        for task in all_runs_results[0][frontend].keys():
+            metrics_across_runs = {
+                'accuracy': [],
+                'f1': [],
+                'wgs': [],
+                'gap': [],
+                'di': []
+            }
+            
+            # Collect metrics from all runs
+            for run_results in all_runs_results:
+                if frontend in run_results and task in run_results[frontend]:
+                    task_results = run_results[frontend][task]
+                    metrics_across_runs['accuracy'].append(task_results.get('overall_accuracy', 0))
+                    metrics_across_runs['f1'].append(task_results.get('overall_f1', 0))
+                    metrics_across_runs['wgs'].append(task_results.get('wgs', 0))
+                    metrics_across_runs['gap'].append(task_results.get('gap', 0))
+                    metrics_across_runs['di'].append(task_results.get('di', 0))
+            
+            # Calculate statistics
+            aggregated[frontend][task] = {}
+            for metric, values in metrics_across_runs.items():
+                if values:
+                    aggregated[frontend][task][metric] = {
+                        'mean': float(np.mean(values)),
+                        'std': float(np.std(values)),
+                        'min': float(np.min(values)),
+                        'max': float(np.max(values)),
+                        'values': values
+                    }
+    
+    return aggregated
+
+
+def test_multirun_significance(aggregated_results):
+    """Test if differences between frontends are significant across runs"""
+    significance_results = {}
+    
+    baseline = 'Mel'
+    
+    for task in ['music', 'scene', 'speech']:
+        significance_results[task] = {}
+        
+        if task not in aggregated_results[baseline]:
+            continue
+        
+        for metric in ['gap', 'wgs']:
+            significance_results[task][metric] = {}
+            
+            if metric not in aggregated_results[baseline][task]:
+                continue
+            
+            baseline_values = aggregated_results[baseline][task][metric]['values']
+            
+            for frontend in aggregated_results.keys():
+                if frontend == baseline:
+                    continue
+                
+                if task in aggregated_results[frontend] and metric in aggregated_results[frontend][task]:
+                    compare_values = aggregated_results[frontend][task][metric]['values']
+                    
+                    # Ensure equal length
+                    min_len = min(len(baseline_values), len(compare_values))
+                    baseline_vals = baseline_values[:min_len]
+                    compare_vals = compare_values[:min_len]
+                    
+                    if len(baseline_vals) > 1:
+                        # Paired t-test
+                        t_stat, t_pval = stats.ttest_rel(baseline_vals, compare_vals)
+                        
+                        # Effect size (Cohen's d)
+                        diff = np.array(baseline_vals) - np.array(compare_vals)
+                        cohens_d = np.mean(diff) / np.std(diff) if np.std(diff) > 0 else 0
+                        
+                        significance_results[task][metric][frontend] = {
+                            'baseline_mean': float(np.mean(baseline_vals)),
+                            'baseline_std': float(np.std(baseline_vals)),
+                            'frontend_mean': float(np.mean(compare_vals)),
+                            'frontend_std': float(np.std(compare_vals)),
+                            'difference': float(np.mean(baseline_vals) - np.mean(compare_vals)),
+                            'p_value': float(t_pval),
+                            'cohens_d': float(cohens_d),
+                            'significant_p001': bool(t_pval < 0.01),
+                            'significant_p005': bool(t_pval < 0.05)
+                        }
+    
+    return significance_results
+
+
+def generate_multirun_report(aggregated_results, significance_results, n_runs):
+    """Generate comprehensive report of multi-run results"""
+    report = []
+    report.append("="*70)
+    report.append("MULTI-RUN SIGNIFICANCE TESTING REPORT")
+    report.append(f"Based on {n_runs} independent experimental runs")
+    report.append("="*70)
+    
+    # Metric stability
+    report.append("\n1. METRIC STABILITY ACROSS RUNS (mean ± std)")
+    report.append("-"*50)
+    
+    for frontend in aggregated_results.keys():
+        report.append(f"\n{frontend}:")
+        for task in aggregated_results[frontend].keys():
+            report.append(f"  {task}:")
+            for metric in ['gap', 'wgs', 'accuracy']:
+                if metric in aggregated_results[frontend][task]:
+                    stats = aggregated_results[frontend][task][metric]
+                    report.append(f"    {metric}: {stats['mean']:.4f} ± {stats['std']:.4f}")
+    
+    # Statistical significance
+    report.append("\n2. STATISTICAL SIGNIFICANCE (vs. Mel baseline)")
+    report.append("-"*50)
+    
+    for task in significance_results:
+        report.append(f"\n{task.upper()}:")
+        for metric in ['gap', 'wgs']:
+            if metric in significance_results[task]:
+                report.append(f"  {metric.upper()} metric:")
+                for frontend in significance_results[task][metric]:
+                    results = significance_results[task][metric][frontend]
+                    report.append(f"    {frontend}:")
+                    report.append(f"      Difference: {results['difference']:.4f}")
+                    report.append(f"      p-value: {results['p_value']:.4f}")
+                    report.append(f"      Cohen's d: {results['cohens_d']:.3f}")
+                    report.append(f"      Significant (p<0.01): {results['significant_p001']}")
+    
+    # Interpretation
+    report.append("\n3. INTERPRETATION")
+    report.append("-"*50)
+    report.append("- Results are ROBUST if std < 0.05 across runs")
+    report.append("- Results are SIGNIFICANT if p < 0.01")
+    report.append("- Effect sizes: |d| < 0.2 (small), 0.2-0.8 (medium), > 0.8 (large)")
+    
+    # Key findings
+    report.append("\n4. KEY FINDINGS")
+    report.append("-"*50)
+    
+    robust_findings = []
+    for task in significance_results:
+        for metric in significance_results[task]:
+            for frontend in significance_results[task][metric]:
+                if significance_results[task][metric][frontend]['significant_p001']:
+                    robust_findings.append(
+                        f"- {frontend} shows significant {metric} improvement for {task} "
+                        f"(p={significance_results[task][metric][frontend]['p_value']:.4f})"
+                    )
+    
+    if robust_findings:
+        report.extend(robust_findings)
+    else:
+        report.append("- No statistically significant improvements found at p<0.01")
+    
+    # Save report
+    report_text = "\n".join(report)
+    
+    os.makedirs('results/multi_run', exist_ok=True)
+    with open('results/multi_run/multirun_report.txt', 'w') as f:
+        f.write(report_text)
+    
+    print(report_text)
+    return report_text
+
+
+def plot_multirun_results(aggregated_results):
+    """Create visualizations of multi-run results"""
+    metrics = ['gap', 'wgs']
+    tasks = ['music', 'scene', 'speech']
+    
+    fig, axes = plt.subplots(len(metrics), len(tasks), figsize=(12, 8))
+    
+    for i, metric in enumerate(metrics):
+        for j, task in enumerate(tasks):
+            ax = axes[i, j] if len(metrics) > 1 else axes[j]
+            
+            data_to_plot = []
+            labels = []
+            
+            for frontend in aggregated_results.keys():
+                if task in aggregated_results[frontend] and metric in aggregated_results[frontend][task]:
+                    data_to_plot.append(aggregated_results[frontend][task][metric]['values'])
+                    labels.append(frontend)
+            
+            if data_to_plot:
+                bp = ax.boxplot(data_to_plot, labels=labels, patch_artist=True)
+                
+                # Color Mel differently as baseline
+                for patch, label in zip(bp['boxes'], labels):
+                    if label == 'Mel':
+                        patch.set_facecolor('lightcoral')
+                    else:
+                        patch.set_facecolor('lightblue')
+                
+                ax.set_title(f'{task.capitalize()} - {metric.upper()}')
+                ax.set_ylabel(metric)
+                ax.grid(True, alpha=0.3)
+                ax.set_xticklabels(labels, rotation=45)
+    
+    plt.suptitle('Multi-Run Results Distribution')
+    plt.tight_layout()
+    
+    os.makedirs('results/multi_run', exist_ok=True)
+    plt.savefig('results/multi_run/multirun_distributions.png', dpi=150)
+    plt.show()
+
+
+# ============== MAIN EXECUTION ==============
+
+def main(run_type='single'):
+    """
+    Main execution function
+    Args:
+        run_type: 'single' for single run, 'multi' for multi-run with significance testing
+    """
+    if run_type == 'multi':
+        # Run multi-run evaluation for robust significance testing
+        aggregated_results, significance_results = run_multi_run_evaluation(n_runs=5)
+    else:
+        # Original single-run evaluation
+        print("="*60)
+        print("AUDIO FRONT-END BIAS EVALUATION PIPELINE")
+        print("Processing Real Audio Files Through Pre-trained Models")
+        print("="*60)
+        
+        # Initialize data loader
+        data_loader = AudioDataLoader()
+        
+        # Load datasets
+        print("\n1. Loading Audio Data...")
+        print("-"*40)
+        
+        tasks_data = {}
+        
+        # Load music data
+        print("\nLoading Music Classification Data...")
+        music_data = data_loader.load_music_data(max_samples=300)
+        if music_data['audio']:
+            tasks_data['music'] = music_data
+            print(f"Loaded {len(music_data['audio'])} music samples")
+        
+        # Load scene data
+        print("\nLoading Scene Classification Data...")
+        scene_data = data_loader.load_scene_data(max_samples=100)
+        if scene_data['audio']:
+            tasks_data['scene'] = scene_data
+            print(f"Loaded {len(scene_data['audio'])} scene samples")
+        
+        # Load speech data
+        print("\nLoading Speech Recognition Data...")
+        speech_data = data_loader.load_speech_data(max_samples=2000)
+        if speech_data['audio']:
+            tasks_data['speech'] = speech_data
+            print(f"Loaded {len(speech_data['audio'])} speech samples")
+        
+        if not tasks_data:
+            print("\nError: No data loaded. Please check your data directory structure.")
+            return
+        
+        print("\n2. Initializing Audio Front-ends...")
+        print("-"*40)
+        
+        frontends = {
+            'Mel': MelFilterbank(n_mels=40),
+            'ERB': ERBFilterbank(n_filters=32),
+            'Bark': BarkFilterbank(n_filters=24),
+            'CQT': CQTFrontend(n_bins=84),
+            'Mel_PCEN': MelPCEN(n_mels=40)
+        }
+        
+        print(f"Initialized {len(frontends)} front-ends: {list(frontends.keys())}")
+        
+        # Run evaluation
+        print("\n3. Running Evaluation on Real Audio...")
+        print("-"*40)
+        
+        evaluator = FairnessEvaluator()
+        results = evaluator.run_full_evaluation(frontends, tasks_data)
+        
+        # Save results
+        print("\n4. Saving Results...")
+        print("-"*40)
+        
+        os.makedirs('results', exist_ok=True)
+        
+        # Save detailed results as JSON
+        with open('results/evaluation_results.json', 'w') as f:
+            json.dump(results, f, indent=2, default=str)
+        
+        print("Results saved to results/evaluation_results.json")
+        
+        # Print summary
+        print("\n" + "="*60)
+        print("EVALUATION COMPLETE")
+        print("="*60)
+        
+        print("\nSummary of Results:")
+        for frontend in frontends.keys():
+            print(f"\n{frontend}:")
+            for task in tasks_data.keys():
+                if frontend in results and task in results[frontend]:
+                    if 'overall_accuracy' in results[frontend][task]:
+                        print(f"  {task}: Acc={results[frontend][task]['overall_accuracy']:.4f}, "
+                              f"WGS={results[frontend][task]['wgs']:.4f}")
+        
+        print("\nAll outputs saved in results/ directory")
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+    
+    # Check command line arguments
+    if len(sys.argv) > 1 and sys.argv[1] == 'multi':
+        # Run multi-run evaluation
+        main(run_type='multi')
+    else:
+        # Run single evaluation
+        main(run_type='single')

@@ -139,8 +139,11 @@ python preprocess_datasets.py --data_dir /path/to/data --output_dir processed_da
 ### Running Experiments
 
 ```bash
-# Run complete evaluation pipeline
+# Run complete evaluation pipeline - Single run
 python frontends_eval.py
+
+# Multi-run with significance testing
+python frontends_eval.py multi
 
 # This will:
 # 1. Load your processed audio data
