@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
 Dataset Preprocessing for Cross-Cultural Audio Bias Evaluation
-Creates balanced evaluation datasets as specified in ICASSP 2026 paper
 
 Data structure expected:
 - speech/{language}/*.wav
@@ -10,7 +9,7 @@ Data structure expected:
 
 Creates evaluation sets:
 - Speech: 2000 samples per language (11 languages)
-- Music: 300 samples per tradition (6 traditions)
+- Music: 300 samples per tradition (6 collections)
 - Scenes: 100 samples per region (2 regions)
 """
 
