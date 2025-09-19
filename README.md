@@ -83,6 +83,8 @@ This codebase implements 7 audio front-ends with fixed transformations that can 
 | **Bark** | Fixed | 24 critical bands | Psychoacoustic Bark scale |
 | **CQT** | Fixed | 84 bins (7 octaves × 12 bins) | Constant-Q Transform for music |
 | **Mel+PCEN** | Fixed | Mel + per-channel normalization | Adaptive gain normalization |
+| **LEAF** | Learnable | 64 learnable Gabor filters | Data-driven frequency allocation, adapts to task |
+| **SincNet** | Learnable | 64 learnable sinc filters | Learnable bandpass filters, sinc-based |
 
 ## 5. Quick Start
 
