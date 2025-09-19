@@ -74,7 +74,7 @@ Modern audio systems universally employ mel-scale representations derived from 1
 
 ## 4. Implemented Front-ends In Codebase
 
-This codebase implements 5 audio front-ends with fixed transformations that can be used as drop-in replacements:
+This codebase implements 7 audio front-ends with fixed transformations that can be used as drop-in replacements:
 
 | Front-end | Type | Parameters | Description |
 |-----------|------|------------|-------------|
@@ -83,20 +83,6 @@ This codebase implements 5 audio front-ends with fixed transformations that can 
 | **Bark** | Fixed | 24 critical bands | Psychoacoustic Bark scale |
 | **CQT** | Fixed | 84 bins (7 octaves × 12 bins) | Constant-Q Transform for music |
 | **Mel+PCEN** | Fixed | Mel + per-channel normalization | Adaptive gain normalization |
-
-### Why LEAF and SincNet Are Not Included In The Codebase
-
-While the paper reports LEAF and SincNet results, these **learnable front-ends** are not included in this codebase because:
-
-1. **Different Architecture**: Unlike fixed filterbanks that process audio independently, LEAF and SincNet have learnable parameters that must be trained jointly with the downstream model. This requires a fundamentally different architecture where the front-end is part of the neural network, not a separate preprocessing step.
-
-2. **FairAudioBench Design Philosophy**: FairAudioBench is designed as a plug-and-play evaluation framework where any fixed front-end can be swapped in using the same pre-trained CRNN models. This ensures performance differences come solely from the frequency decomposition method, not from different training procedures or model architectures.
-
-3. **Reproducibility**: Fixed front-ends (Mel, ERB, Bark, CQT, PCEN) require no training and produce deterministic outputs, making results immediately reproducible. Learnable front-ends would require distributing multiple task-specific checkpoints and exact training configurations.
-
-**Note**: We plan to release the LEAF and SincNet implementations along with their pre-trained models after paper acceptance. These will be available in the same repository with appropriate pipelines.
-
-For researchers interested in learnable front-ends, we recommend training them end-to-end with your specific task following the original LEAF (Zeghidour et al., 2021) and SincNet (Ravanelli & Bengio, 2018) papers. The paper's Table 1 includes their full results for comparison.
 
 ## 5. Quick Start
 
@@ -147,7 +133,7 @@ python frontends_eval.py multi
 
 # This will:
 # 1. Load your processed audio data
-# 2. Evaluate 5 implemented front-ends on all 3 tasks  
+# 2. Evaluate 7 implemented front-ends on all 3 tasks  
 # 3. Calculate fairness metrics (WGS, Gap, DI)
 ```
 
