@@ -226,13 +226,12 @@ class MelPCEN(nn.Module):
 
 
 # ============== CRNN MODEL ==============
-
 class CRNN(nn.Module):
-    """CRNN with better spectro-temporal modeling"""
+    """CRNN with FIXED spectro-temporal modeling"""
     def __init__(self, input_dim=80, num_classes=10, task_type='classification'):
         super().__init__()
         self.task_type = task_type
-        self.input_dim = input_dim  # Store for later use
+        self.input_dim = input_dim
         
         # Frequency-aware CNN blocks
         self.conv1a = nn.Conv2d(1, 64, kernel_size=(3, 3), padding=1)
@@ -256,16 +255,15 @@ class CRNN(nn.Module):
         self.time_pool = nn.MaxPool2d((1, 2))  # Pool time only
         self.both_pool = nn.MaxPool2d((2, 2))  # Pool both
         
-        # Calculate actual frequency dimension after pooling
-        # After: both_pool -> freq_pool -> time_pool -> both_pool
-        # Frequency dimension: input_dim / 2 / 2 / 1 / 2 = input_dim / 8
-        freq_dim_after_pool = input_dim // 8
+
+        freq_dim_after_pool = max(1, input_dim // 8)  # Ensure at least 1
         
-        # Attention mechanism for frequency dimension - FIX THE DIMENSIONS
+        # FIXED: Frequency attention mechanism with correct dimensions
         self.freq_attention = nn.Sequential(
-            nn.Linear(freq_dim_after_pool * 256, 128),  # Fixed input size
+            nn.Linear(freq_dim_after_pool * 256, 128),
             nn.ReLU(),
-            nn.Linear(128, freq_dim_after_pool),  # Output per frequency bin
+            nn.Dropout(0.1),
+            nn.Linear(128, freq_dim_after_pool),  # Output: one weight per frequency bin
             nn.Sigmoid()
         )
         
@@ -298,7 +296,7 @@ class CRNN(nn.Module):
             self.output_head = nn.Linear(512, num_classes)
         
         # Learnable positional encoding for time dimension
-        self.positional_encoding = nn.Parameter(torch.randn(1, 1000, 1))
+        self.positional_encoding = nn.Parameter(torch.randn(1, 1000, 1) * 0.02)
         
     def forward(self, x):
         # Input shape: (batch, freq_bins, time_frames) or (batch, 1, freq, time)
@@ -308,61 +306,62 @@ class CRNN(nn.Module):
         batch_size = x.size(0)
         
         # Block 1: Extract low-level features
-        conv1 = self.conv1a(x)
-        conv1 = torch.relu(conv1)
-        conv1 = self.conv1b(conv1)
+        conv1 = torch.relu(self.conv1a(x))
+        conv1 = torch.relu(self.conv1b(conv1))
         conv1 = self.bn1(conv1)
-        conv1 = torch.relu(conv1)
-        x1 = self.both_pool(conv1)  # Frequency: input_dim/2
+        x1 = self.both_pool(conv1)  # Freq: input_dim/2, Time: T/2
         x1 = self.dropout_conv(x1)
         
         # Block 2: Mid-level features
-        conv2 = self.conv2a(x1)
-        conv2 = torch.relu(conv2)
-        conv2 = self.conv2b(conv2)
+        conv2 = torch.relu(self.conv2a(x1))
+        conv2 = torch.relu(self.conv2b(conv2))
         conv2 = self.bn2(conv2)
-        conv2 = torch.relu(conv2)
-        x2 = self.freq_pool(conv2)  # Frequency: input_dim/4
+        x2 = self.freq_pool(conv2)  # Freq: input_dim/4, Time: T/2
         x2 = self.dropout_conv(x2)
         
         # Block 3: High-level features
-        conv3 = self.conv3a(x2)
-        conv3 = torch.relu(conv3)
-        conv3 = self.conv3b(conv3)
+        conv3 = torch.relu(self.conv3a(x2))
+        conv3 = torch.relu(self.conv3b(conv3))
         conv3 = self.bn3(conv3)
-        conv3 = torch.relu(conv3)
-        x3 = self.time_pool(conv3)  # Frequency: input_dim/4 (time pooling only)
+        x3 = self.time_pool(conv3)  # Freq: input_dim/4, Time: T/4
         x3 = self.dropout_conv(x3)
         
         # Block 4: Final CNN features
-        conv4 = self.conv4a(x3)
-        conv4 = torch.relu(conv4)
-        conv4 = self.conv4b(conv4)
+        conv4 = torch.relu(self.conv4a(x3))
+        conv4 = torch.relu(self.conv4b(conv4))
         conv4 = self.bn4(conv4)
-        conv4 = torch.relu(conv4)
-        x4 = self.both_pool(conv4)  # Frequency: input_dim/8
+        x4 = self.both_pool(conv4)  # Freq: input_dim/8, Time: T/8
         x4 = self.dropout_conv(x4)
         
         # Get dimensions
         batch, channels, freq, time = x4.size()
         
         # Apply frequency attention
-        freq_features = x4.mean(dim=3)  # Average over time: (batch, channels, freq)
+        # Average over time dimension to get frequency profile
+        freq_features = x4.mean(dim=3)  # (batch, channels, freq)
         freq_features_flat = freq_features.view(batch, -1)  # (batch, channels*freq)
+        
+        # Generate attention weights for each frequency bin
         freq_weights = self.freq_attention(freq_features_flat)  # (batch, freq)
-        freq_weights = freq_weights.view(batch, 1, freq, 1)  # Reshape for broadcasting
-        x4 = x4 * freq_weights  # Apply attention weights
+        
+        # Reshape for broadcasting and apply
+        freq_weights = freq_weights.view(batch, 1, freq, 1)
+        x4 = x4 * freq_weights
         
         # Prepare for RNN
         x4 = x4.permute(0, 3, 1, 2)  # (batch, time, channels, freq)
-        x4 = x4.reshape(batch, time, -1)  # (batch, time, features)
+        x4 = x4.reshape(batch, time, -1)  # (batch, time, channels*freq)
         
-        # Add positional encoding (fix dimension)
+        # Add positional encoding (with bounds checking)
         if time <= self.positional_encoding.size(1):
-            pos_enc = self.positional_encoding[:, :time, :].expand(batch, time, 1)
-            x4 = x4 + pos_enc
+            pos_enc = self.positional_encoding[:, :time, :]
+        else:
+            # If sequence is longer than expected, repeat the encoding
+            repeats = (time // self.positional_encoding.size(1)) + 1
+            pos_enc = self.positional_encoding.repeat(1, repeats, 1)[:, :time, :]
+        x4 = x4 + pos_enc
         
-        # Two-layer bidirectional LSTM
+        # Two-layer bidirectional LSTM with residual connections
         lstm_out1, _ = self.lstm1(x4)
         lstm_out1 = self.ln1(lstm_out1)
         lstm_out1 = self.dropout_rnn(lstm_out1)
@@ -370,13 +369,14 @@ class CRNN(nn.Module):
         lstm_out2, _ = self.lstm2(lstm_out1)
         lstm_out2 = self.ln2(lstm_out2)
         
-        # Combine different temporal aggregations
+        # Multiple aggregation strategies
         avg_pool = torch.mean(lstm_out2, dim=1)
-        max_pool = torch.max(lstm_out2, dim=1)[0]
+        max_pool, _ = torch.max(lstm_out2, dim=1)
         last_hidden = lstm_out2[:, -1, :]
         
         # Attention-weighted average
-        attention_weights = torch.softmax(lstm_out2.mean(dim=2, keepdim=True), dim=1)
+        attention_scores = torch.bmm(lstm_out2, lstm_out2.transpose(1, 2))
+        attention_weights = torch.softmax(attention_scores.sum(dim=2, keepdim=True), dim=1)
         attention_pool = (lstm_out2 * attention_weights).sum(dim=1)
         
         # Combine all pooling strategies
@@ -386,7 +386,6 @@ class CRNN(nn.Module):
         output = self.output_head(combined)
         
         return output
-
 
 # ============== DATA LOADING ==============
 
@@ -833,6 +832,8 @@ class FairnessEvaluator:
                 input_dim = 24
             elif frontend_name == 'CQT':
                 input_dim = 84
+            elif frontend_name in ['LEAF', 'SincNet']:
+                input_dim = 64
             else:
                 input_dim = 80  # fallback
             
@@ -969,7 +970,9 @@ def run_multi_run_evaluation(n_runs=5):
         'ERB': ERBFilterbank(n_filters=32),
         'Bark': BarkFilterbank(n_filters=24),
         'CQT': CQTFrontend(n_bins=84),
-        'Mel_PCEN': MelPCEN(n_mels=40)
+        'Mel_PCEN': MelPCEN(n_mels=40),
+        'LEAF': LEAFFrontend(n_filters=64),
+        'SincNet': SincNetFrontend(n_filters=64)
     }
     
     print(f"Initialized {len(frontends)} front-ends: {list(frontends.keys())}")

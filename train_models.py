@@ -1,260 +1,585 @@
 #!/usr/bin/env python3
-"""
-Train CRNN Models for Audio Tasks
-This script trains the CRNN models needed for the evaluation pipeline
-"""
 
 import os
+os.environ['CUDA_VISIBLE_DEVICES'] = '0,3'
+
 import math
-import torch.nn.functional as F
 import json
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
+from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.distributed import init_process_group, destroy_process_group
+import torch.multiprocessing as mp
+from torch.cuda.amp import autocast, GradScaler
 import torchaudio
 import librosa
 from pathlib import Path
 from tqdm import tqdm
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder
 import warnings
 warnings.filterwarnings('ignore')
 
 # Set random seeds for reproducibility
-torch.manual_seed(42)
-np.random.seed(42)
+def set_seed(seed=42):
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
-# ============== DATASET CLASS ==============
+# ============== DISTRIBUTED TRAINING SETUP ==============
+
+def setup_ddp(rank, world_size):
+    """Initialize distributed training"""
+    os.environ['MASTER_ADDR'] = 'localhost'
+    os.environ['MASTER_PORT'] = '12355'
+    init_process_group("nccl", rank=rank, world_size=world_size)
+    torch.cuda.set_device(rank)
+
+def cleanup():
+    destroy_process_group()
+
+# ============== OPTIMIZED DATASET CLASS ==============
 
 class AudioDataset(Dataset):
-    """Dataset for loading audio files and labels"""
+    """Optimized dataset with caching and better error handling"""
     
-    def __init__(self, file_paths, labels, frontend, max_length_seconds=10):
+    def __init__(self, file_paths, labels, frontend, max_length_seconds=10, 
+                 cache_features=True, rank=0):
         self.file_paths = file_paths
         self.labels = labels
         self.frontend = frontend
         self.sample_rate = 16000
         self.max_length = max_length_seconds * self.sample_rate
-    
+        self.cache_features = cache_features
+        self.feature_cache = {}
+        self.rank = rank
+        
     def __len__(self):
         return len(self.file_paths)
     
     def __getitem__(self, idx):
-        # Load audio with better error handling
+        # Check cache first
+        if self.cache_features and idx in self.feature_cache:
+            return self.feature_cache[idx], self.labels[idx]
+        
         audio_path = self.file_paths[idx]
         
         try:
-            # Try torchaudio first (usually most reliable)
-            waveform, sr = torchaudio.load(audio_path)
-        except:
-            try:
-                # Fallback to librosa with audioread
-                import librosa
-                import audioread
-                waveform, sr = librosa.load(audio_path, sr=None, mono=False)
-                waveform = torch.from_numpy(waveform).float()
-                if waveform.dim() == 1:
-                    waveform = waveform.unsqueeze(0)
-            except:
-                # If all fails, return zeros (will be skipped in training)
-                print(f"Warning: Could not load {audio_path}, using silence")
-                waveform = torch.zeros(1, self.max_length)
-                sr = self.sample_rate
-        
-        # Resample if needed
-        if sr != self.sample_rate:
-            resampler = torchaudio.transforms.Resample(sr, self.sample_rate)
-            waveform = resampler(waveform)
-        
-        # Convert to mono
-        if waveform.shape[0] > 1:
-            waveform = torch.mean(waveform, dim=0, keepdim=True)
-        
-        # Trim or pad
-        if waveform.shape[1] > self.max_length:
-            waveform = waveform[:, :self.max_length]
-        else:
-            padding = self.max_length - waveform.shape[1]
-            waveform = torch.nn.functional.pad(waveform, (0, padding))
-        
-        # Extract features using frontend
-        with torch.no_grad():
-            features = self.frontend(waveform.squeeze(0))
-        
-        return features, self.labels[idx]
+            # Load audio efficiently
+            waveform, sr = torchaudio.load(audio_path, normalize=True)
+            
+            # Resample if needed
+            if sr != self.sample_rate:
+                resampler = torchaudio.transforms.Resample(sr, self.sample_rate)
+                waveform = resampler(waveform)
+            
+            # Convert to mono
+            if waveform.shape[0] > 1:
+                waveform = torch.mean(waveform, dim=0, keepdim=True)
+            
+            # Trim or pad
+            if waveform.shape[1] > self.max_length:
+                # Random crop for training variety
+                if self.labels is not None:  # Training mode
+                    start = torch.randint(0, waveform.shape[1] - self.max_length + 1, (1,))
+                    waveform = waveform[:, start:start + self.max_length]
+                else:  # Validation/test mode
+                    waveform = waveform[:, :self.max_length]
+            else:
+                padding = self.max_length - waveform.shape[1]
+                waveform = F.pad(waveform, (0, padding))
+            
+            # Extract features using frontend
+            with torch.no_grad():
+                features = self.frontend(waveform.squeeze(0))
+            
+            # Cache if enabled
+            if self.cache_features and len(self.feature_cache) < 10000:  # Limit cache size
+                self.feature_cache[idx] = features
+            
+            return features, self.labels[idx]
+            
+        except Exception as e:
+            if self.rank == 0:
+                print(f"Error loading {audio_path}: {e}")
+            # Return zero features as fallback
+            features = torch.zeros((self.frontend.n_filters if hasattr(self.frontend, 'n_filters') else 40, 
+                                   self.max_length // 160))
+            return features, self.labels[idx]
 
+# ============== OPTIMIZED CRNN MODEL ==============
 
-# ============== MODEL ARCHITECTURES ==============
 class CRNN(nn.Module):
-    """CRNN with FIXED spectro-temporal modeling"""
-    def __init__(self, input_dim=80, num_classes=10, task_type='classification'):
+    """CRNN with paper-compliant architecture and optimizations"""
+    def __init__(self, input_dim=80, num_classes=10, task_type='classification', dropout_rate=0.3):
         super().__init__()
         self.task_type = task_type
         self.input_dim = input_dim
         
-        # Frequency-aware CNN blocks
-        self.conv1a = nn.Conv2d(1, 64, kernel_size=(3, 3), padding=1)
-        self.conv1b = nn.Conv2d(64, 64, kernel_size=(3, 3), padding=1)
-        self.bn1 = nn.BatchNorm2d(64)
+        # Frequency-aware CNN blocks with grouped convolutions for efficiency
+        self.conv1 = nn.Sequential(
+            nn.Conv2d(1, 64, kernel_size=(3, 3), padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(64, 64, kernel_size=(3, 3), padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d((2, 2))
+        )
         
-        self.conv2a = nn.Conv2d(64, 128, kernel_size=(3, 3), padding=1)
-        self.conv2b = nn.Conv2d(128, 128, kernel_size=(3, 3), padding=1)
-        self.bn2 = nn.BatchNorm2d(128)
+        self.conv2 = nn.Sequential(
+            nn.Conv2d(64, 128, kernel_size=(3, 3), padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(128, 128, kernel_size=(3, 3), padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d((2, 1))  # Only pool frequency
+        )
         
-        self.conv3a = nn.Conv2d(128, 256, kernel_size=(3, 3), padding=1)
-        self.conv3b = nn.Conv2d(256, 256, kernel_size=(3, 3), padding=1)
-        self.bn3 = nn.BatchNorm2d(256)
+        self.conv3 = nn.Sequential(
+            nn.Conv2d(128, 256, kernel_size=(3, 3), padding=1),
+            nn.BatchNorm2d(256),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(256, 256, kernel_size=(3, 3), padding=1),
+            nn.BatchNorm2d(256),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d((1, 2))  # Only pool time
+        )
         
-        self.conv4a = nn.Conv2d(256, 256, kernel_size=(3, 3), padding=1)
-        self.conv4b = nn.Conv2d(256, 256, kernel_size=(3, 3), padding=1)
-        self.bn4 = nn.BatchNorm2d(256)
+        self.conv4 = nn.Sequential(
+            nn.Conv2d(256, 256, kernel_size=(3, 3), padding=1),
+            nn.BatchNorm2d(256),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(256, 256, kernel_size=(3, 3), padding=1),
+            nn.BatchNorm2d(256),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d((2, 2))
+        )
         
-        # Pooling strategies
-        self.freq_pool = nn.MaxPool2d((2, 1))  # Pool frequency only
-        self.time_pool = nn.MaxPool2d((1, 2))  # Pool time only
-        self.both_pool = nn.MaxPool2d((2, 2))  # Pool both
+        # Calculate RNN input size
+        freq_dim_after_pool = max(1, input_dim // 8)
         
-
-        freq_dim_after_pool = max(1, input_dim // 8)  # Ensure at least 1
-        
-        # FIXED: Frequency attention mechanism with correct dimensions
+        # Frequency attention (as per paper)
         self.freq_attention = nn.Sequential(
             nn.Linear(freq_dim_after_pool * 256, 128),
-            nn.ReLU(),
-            nn.Dropout(0.1),
-            nn.Linear(128, freq_dim_after_pool),  # Output: one weight per frequency bin
+            nn.ReLU(inplace=True),
+            nn.Dropout(dropout_rate * 0.3),
+            nn.Linear(128, freq_dim_after_pool),
             nn.Sigmoid()
         )
         
-        # Dropout with different rates
-        self.dropout_conv = nn.Dropout2d(0.2)
-        self.dropout_rnn = nn.Dropout(0.3)
+        # Dropout layers
+        self.dropout_conv = nn.Dropout2d(dropout_rate * 0.6)
+        self.dropout_rnn = nn.Dropout(dropout_rate)
         
-        # Calculate RNN input size
+        # RNN layers
         rnn_input_size = freq_dim_after_pool * 256
         
-        # Multi-scale temporal modeling
+        # Using LSTM instead of GRU for better gradient flow in deep networks
         self.lstm1 = nn.LSTM(rnn_input_size, 256, num_layers=1,
-                            batch_first=True, bidirectional=True)
+                            batch_first=True, bidirectional=True, dropout=0)
         self.lstm2 = nn.LSTM(512, 256, num_layers=1,
-                            batch_first=True, bidirectional=True)
+                            batch_first=True, bidirectional=True, dropout=0)
         
-        # Layer normalization for LSTM outputs
+        # Layer normalization
         self.ln1 = nn.LayerNorm(512)
         self.ln2 = nn.LayerNorm(512)
         
-        # Task-specific heads
+        # Output head
         if task_type == 'classification':
             self.output_head = nn.Sequential(
                 nn.Linear(512, 256),
-                nn.ReLU(),
-                nn.Dropout(0.5),
+                nn.ReLU(inplace=True),
+                nn.Dropout(dropout_rate * 1.5),
                 nn.Linear(256, num_classes)
             )
         else:
             self.output_head = nn.Linear(512, num_classes)
         
-        # Learnable positional encoding for time dimension
+        # Positional encoding
         self.positional_encoding = nn.Parameter(torch.randn(1, 1000, 1) * 0.02)
         
     def forward(self, x):
-        # Input shape: (batch, freq_bins, time_frames) or (batch, 1, freq, time)
+        # Input shape: (batch, freq_bins, time_frames)
         if len(x.shape) == 3:
             x = x.unsqueeze(1)
         
         batch_size = x.size(0)
         
-        # Block 1: Extract low-level features
-        conv1 = torch.relu(self.conv1a(x))
-        conv1 = torch.relu(self.conv1b(conv1))
-        conv1 = self.bn1(conv1)
-        x1 = self.both_pool(conv1)  # Freq: input_dim/2, Time: T/2
-        x1 = self.dropout_conv(x1)
+        # CNN blocks
+        x = self.conv1(x)
+        x = self.dropout_conv(x)
         
-        # Block 2: Mid-level features
-        conv2 = torch.relu(self.conv2a(x1))
-        conv2 = torch.relu(self.conv2b(conv2))
-        conv2 = self.bn2(conv2)
-        x2 = self.freq_pool(conv2)  # Freq: input_dim/4, Time: T/2
-        x2 = self.dropout_conv(x2)
+        x = self.conv2(x)
+        x = self.dropout_conv(x)
         
-        # Block 3: High-level features
-        conv3 = torch.relu(self.conv3a(x2))
-        conv3 = torch.relu(self.conv3b(conv3))
-        conv3 = self.bn3(conv3)
-        x3 = self.time_pool(conv3)  # Freq: input_dim/4, Time: T/4
-        x3 = self.dropout_conv(x3)
+        x = self.conv3(x)
+        x = self.dropout_conv(x)
         
-        # Block 4: Final CNN features
-        conv4 = torch.relu(self.conv4a(x3))
-        conv4 = torch.relu(self.conv4b(conv4))
-        conv4 = self.bn4(conv4)
-        x4 = self.both_pool(conv4)  # Freq: input_dim/8, Time: T/8
-        x4 = self.dropout_conv(x4)
-        
-        # Get dimensions
-        batch, channels, freq, time = x4.size()
+        x = self.conv4(x)
+        x = self.dropout_conv(x)
         
         # Apply frequency attention
-        # Average over time dimension to get frequency profile
-        freq_features = x4.mean(dim=3)  # (batch, channels, freq)
-        freq_features_flat = freq_features.view(batch, -1)  # (batch, channels*freq)
+        batch, channels, freq, time = x.size()
         
-        # Generate attention weights for each frequency bin
-        freq_weights = self.freq_attention(freq_features_flat)  # (batch, freq)
-        
-        # Reshape for broadcasting and apply
+        freq_features = x.mean(dim=3)
+        freq_features_flat = freq_features.view(batch, -1)
+        freq_weights = self.freq_attention(freq_features_flat)
         freq_weights = freq_weights.view(batch, 1, freq, 1)
-        x4 = x4 * freq_weights
+        x = x * freq_weights
         
         # Prepare for RNN
-        x4 = x4.permute(0, 3, 1, 2)  # (batch, time, channels, freq)
-        x4 = x4.reshape(batch, time, -1)  # (batch, time, channels*freq)
+        x = x.permute(0, 3, 1, 2).reshape(batch, time, -1)
         
-        # Add positional encoding (with bounds checking)
+        # Add positional encoding
         if time <= self.positional_encoding.size(1):
             pos_enc = self.positional_encoding[:, :time, :]
         else:
-            # If sequence is longer than expected, repeat the encoding
             repeats = (time // self.positional_encoding.size(1)) + 1
             pos_enc = self.positional_encoding.repeat(1, repeats, 1)[:, :time, :]
-        x4 = x4 + pos_enc
+        x = x + pos_enc
         
-        # Two-layer bidirectional LSTM with residual connections
-        lstm_out1, _ = self.lstm1(x4)
+        # LSTM layers
+        lstm_out1, _ = self.lstm1(x)
         lstm_out1 = self.ln1(lstm_out1)
         lstm_out1 = self.dropout_rnn(lstm_out1)
         
         lstm_out2, _ = self.lstm2(lstm_out1)
         lstm_out2 = self.ln2(lstm_out2)
         
-        # Multiple aggregation strategies
+        # Pooling strategies
         avg_pool = torch.mean(lstm_out2, dim=1)
         max_pool, _ = torch.max(lstm_out2, dim=1)
         last_hidden = lstm_out2[:, -1, :]
         
-        # Attention-weighted average
+        # Attention pooling
         attention_scores = torch.bmm(lstm_out2, lstm_out2.transpose(1, 2))
         attention_weights = torch.softmax(attention_scores.sum(dim=2, keepdim=True), dim=1)
         attention_pool = (lstm_out2 * attention_weights).sum(dim=1)
         
-        # Combine all pooling strategies
+        # Combine all
         combined = (avg_pool + max_pool + last_hidden + attention_pool) / 4
         
-        # Task-specific output
-        output = self.output_head(combined)
-        
-        return output
+        return self.output_head(combined)
 
+# ============== DATA LOADING FUNCTIONS ==============
+
+def load_music_data(data_dir='../ICASSP/data/music', max_per_genre=None):
+    """Load music classification data - keeping original structure"""
+    print("Loading music data...")
+    
+    # Same genre names as original
+    genres = ['arab_andalusian', 'carnatic', 'fma_small', 'gtzan', 
+              'hindustani', 'turkish_makam']
+    
+    file_paths = []
+    labels = []
+    
+    for genre_idx, genre in enumerate(genres):
+        genre_dir = Path(data_dir) / genre
+        if not genre_dir.exists():
+            print(f"  Warning: {genre} not found")
+            continue
+        
+        audio_files = list(genre_dir.glob('*.wav')) + list(genre_dir.glob('*.mp3'))
+        if max_per_genre:
+            audio_files = audio_files[:max_per_genre]
+        
+        print(f"  Found {len(audio_files)} files in {genre}")
+        
+        for audio_file in audio_files:
+            file_paths.append(str(audio_file))
+            labels.append(genre_idx)
+    
+    print(f"Total music files: {len(file_paths)}")
+    return file_paths, labels, len(genres)
+
+def load_scene_data(data_dir='../ICASSP/data/scenes', max_per_scene=None):
+    """Load scene classification data - keeping original structure"""
+    print("Loading scene data...")
+    
+    # Keep it simple like original - just two scene directories
+    scenes = ['european-1', 'european-2']
+    
+    file_paths = []
+    labels = []
+    
+    for scene_idx, scene in enumerate(scenes):
+        scene_dir = Path(data_dir) / scene
+        if not scene_dir.exists():
+            print(f"  Warning: {scene} not found")
+            continue
+        
+        audio_files = list(scene_dir.glob('*.wav'))
+        if max_per_scene:
+            audio_files = audio_files[:max_per_scene]
+        
+        print(f"  Found {len(audio_files)} files in {scene}")
+        
+        for audio_file in audio_files:
+            file_paths.append(str(audio_file))
+            labels.append(scene_idx)
+    
+    print(f"Total scene files: {len(file_paths)}")
+    return file_paths, labels, len(scenes)
+
+def load_speech_data(data_dir='../ICASSP/data/speech', max_per_language=None):
+    """Load speech data for language classification - keeping original structure"""
+    print("Loading speech data...")
+    
+    # Same language codes as original
+    languages = ['de', 'en', 'es', 'fr', 'it', 'nl', 'pa-IN', 'th', 'vi', 
+                 'yue', 'zh-CN']
+    
+    file_paths = []
+    labels = []
+    
+    for lang_idx, lang in enumerate(languages):
+        lang_dir = Path(data_dir) / lang
+        if not lang_dir.exists():
+            print(f"  Warning: {lang} not found")
+            continue
+        
+        audio_files = list(lang_dir.glob('*.wav'))
+        if max_per_language:
+            audio_files = audio_files[:max_per_language]
+        
+        print(f"  Found {len(audio_files)} files in {lang}")
+        
+        for audio_file in audio_files:
+            file_paths.append(str(audio_file))
+            labels.append(lang_idx)
+    
+    print(f"Total speech files: {len(file_paths)}")
+    return file_paths, labels, len(languages)
+
+# ============== TRAINING FUNCTIONS ==============
+
+def train_epoch(model, train_loader, criterion, optimizer, scaler, device, rank, accumulation_steps=1):
+    """Single epoch training with mixed precision and gradient accumulation"""
+    model.train()
+    train_loss = 0
+    train_correct = 0
+    train_total = 0
+    
+    pbar = tqdm(train_loader, desc=f'Training', disable=(rank != 0))
+    
+    for batch_idx, (features, labels) in enumerate(pbar):
+        features = features.to(device)
+        labels = labels.to(device)
+        
+        # Mixed precision training
+        with autocast():
+            outputs = model(features)
+            loss = criterion(outputs, labels)
+            loss = loss / accumulation_steps  # Scale loss for gradient accumulation
+        
+        # Backward pass with gradient scaling
+        scaler.scale(loss).backward()
+        
+        # Update weights every accumulation_steps
+        if (batch_idx + 1) % accumulation_steps == 0:
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            scaler.step(optimizer)
+            scaler.update()
+            optimizer.zero_grad(set_to_none=True)
+        
+        # Statistics
+        train_loss += loss.item() * accumulation_steps
+        _, predicted = torch.max(outputs.data, 1)
+        train_total += labels.size(0)
+        train_correct += (predicted == labels).sum().item()
+        
+        if rank == 0:
+            pbar.set_postfix({'loss': loss.item() * accumulation_steps, 
+                             'acc': train_correct/train_total})
+        
+        # Clear cache periodically to prevent memory buildup
+        if batch_idx % 10 == 0:
+            torch.cuda.empty_cache()
+    
+    # Handle remaining gradients
+    if (batch_idx + 1) % accumulation_steps != 0:
+        scaler.unscale_(optimizer)
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        scaler.step(optimizer)
+        scaler.update()
+        optimizer.zero_grad(set_to_none=True)
+    
+    return train_loss / len(train_loader), train_correct / train_total
+
+def validate(model, val_loader, criterion, device, rank):
+    """Validation with mixed precision"""
+    model.eval()
+    val_loss = 0
+    val_correct = 0
+    val_total = 0
+    
+    with torch.no_grad():
+        for features, labels in tqdm(val_loader, desc='Validation', disable=(rank != 0)):
+            features = features.to(device)
+            labels = labels.to(device)
+            
+            with autocast():
+                outputs = model(features)
+                loss = criterion(outputs, labels)
+            
+            val_loss += loss.item()
+            _, predicted = torch.max(outputs.data, 1)
+            val_total += labels.size(0)
+            val_correct += (predicted == labels).sum().item()
+    
+    return val_loss / len(val_loader), val_correct / val_total
+
+def train_model_ddp(rank, world_size, frontend_name, frontend_config, 
+                    task_name, task_data, num_epochs=30, batch_size=32):
+    """Distributed training function with memory optimization"""
+    
+    # Setup DDP
+    setup_ddp(rank, world_size)
+    device = torch.device(f'cuda:{rank}')
+    set_seed(42 + rank)
+    
+    # Clear GPU cache before starting
+    torch.cuda.empty_cache()
+    
+    # Unpack task data
+    file_paths, labels, num_classes = task_data
+    
+    if rank == 0:
+        print(f"\n--- Training {task_name} with {frontend_name} ---")
+        print(f"Total samples: {len(file_paths)}")
+    
+    # Split data (80/10/10 as per paper)
+    X_temp, X_test, y_temp, y_test = train_test_split(
+        file_paths, labels, test_size=0.1, random_state=42, stratify=labels
+    )
+    X_train, X_val, y_train, y_val = train_test_split(
+        X_temp, y_temp, test_size=0.111, random_state=42, stratify=y_temp  # 0.111 * 0.9 ≈ 0.1
+    )
+    
+    if rank == 0:
+        print(f"Train: {len(X_train)}, Val: {len(X_val)}, Test: {len(X_test)}")
+    
+    # Initialize frontend
+    frontend_class = frontend_config['class']
+    frontend_params = frontend_config['params']
+    input_dim = frontend_config['input_dim']
+    frontend = frontend_class(**frontend_params)
+    
+    # Determine max length based on task
+    max_length = 5 if task_name == 'speech' else 10
+    
+    # Create datasets with caching disabled for memory issues
+    train_dataset = AudioDataset(X_train, y_train, frontend, 
+                                max_length_seconds=max_length, 
+                                cache_features=False, rank=rank)  # Disable caching for memory
+    val_dataset = AudioDataset(X_val, y_val, frontend, 
+                              max_length_seconds=max_length,
+                              cache_features=False, rank=rank)
+    
+    # Distributed samplers
+    from torch.utils.data.distributed import DistributedSampler
+    train_sampler = DistributedSampler(train_dataset, num_replicas=world_size, 
+                                      rank=rank, shuffle=True)
+    val_sampler = DistributedSampler(val_dataset, num_replicas=world_size, 
+                                    rank=rank, shuffle=False)
+    
+    # Create dataloaders with fewer workers for memory
+    num_workers = 2 if world_size > 4 else 4  # Reduce workers for many GPUs
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, 
+                            sampler=train_sampler, num_workers=num_workers,
+                            pin_memory=True, prefetch_factor=1)  # Reduced prefetch
+    val_loader = DataLoader(val_dataset, batch_size=batch_size,
+                          sampler=val_sampler, num_workers=num_workers,
+                          pin_memory=True, prefetch_factor=1)
+    
+    # Create model
+    model = CRNN(input_dim=input_dim, num_classes=num_classes).to(device)
+    model = DDP(model, device_ids=[rank])
+    
+    # Loss, optimizer, scheduler
+    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.AdamW(model.parameters(), lr=0.001, weight_decay=1e-4)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=5, factor=0.5)
+    
+    # Mixed precision scaler
+    scaler = GradScaler()
+    
+    # Gradient accumulation steps (increase if memory issues)
+    accumulation_steps = 2 if world_size > 4 else 1
+    
+    # Training loop
+    best_val_acc = 0
+    best_model_state = None
+    patience_counter = 0
+    early_stop_patience = 10
+    
+    for epoch in range(num_epochs):
+        # Set epoch for distributed sampler
+        train_sampler.set_epoch(epoch)
+        
+        # Train with gradient accumulation
+        train_loss, train_acc = train_epoch(model, train_loader, criterion, 
+                                           optimizer, scaler, device, rank,
+                                           accumulation_steps=accumulation_steps)
+        
+        # Validate
+        val_loss, val_acc = validate(model, val_loader, criterion, device, rank)
+        
+        # Update scheduler
+        scheduler.step(val_loss)
+        
+        # Save best model (only on rank 0)
+        if rank == 0:
+            if val_acc > best_val_acc:
+                best_val_acc = val_acc
+                best_model_state = model.module.state_dict().copy()
+                patience_counter = 0
+            else:
+                patience_counter += 1
+            
+            print(f'Epoch {epoch+1}/{num_epochs}: '
+                  f'Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f}, '
+                  f'Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.4f}')
+            
+            # Early stopping
+            if patience_counter >= early_stop_patience:
+                print("Early stopping triggered")
+                break
+        
+        # Clear cache after each epoch
+        torch.cuda.empty_cache()
+    
+    # Save final model (only on rank 0)
+    if rank == 0 and best_model_state:
+        os.makedirs('models', exist_ok=True)
+        model_path = f'models/crnn_{task_name}_{frontend_name}.pth'
+        torch.save(best_model_state, model_path)
+        print(f"Model saved: {model_path} (Best Acc: {best_val_acc:.4f})")
+        
+        # Save training history
+        history = {
+            'best_val_acc': best_val_acc,
+            'final_epoch': epoch + 1
+        }
+        with open(f'models/{task_name}_{frontend_name}_history.json', 'w') as f:
+            json.dump(history, f, indent=2)
+    
+    cleanup()
+    return best_val_acc
 
 # ============== AUDIO FRONT-ENDS ==============
 
 class LEAFFrontend(nn.Module):
-    """
-    LEAF: Learnable Audio Frontend - FINAL FIXED VERSION
-    """
+    """LEAF: Learnable Audio Frontend"""
     def __init__(self, sample_rate=16000, n_filters=64, window_len=401, 
                  window_stride=160):
         super().__init__()
@@ -275,9 +600,6 @@ class LEAFFrontend(nn.Module):
         # Learnable parameters for Gabor filters
         self.center_freqs = nn.Parameter(torch.tensor(center_freqs, dtype=torch.float32))
         self.bandwidths = nn.Parameter(torch.ones(n_filters) * 0.5)
-        
-        # Pooling for compression (optional - remove if you want to match other frontends exactly)
-        # self.pooling = nn.AvgPool1d(kernel_size=2, stride=2)
     
     def forward(self, waveform):
         # Store original shape info
@@ -323,13 +645,9 @@ class LEAFFrontend(nn.Module):
         
         # Apply convolution
         filtered = F.conv1d(waveform, filters, stride=self.window_stride, padding=self.window_len//2)
-        # Output shape: (1, n_filters, time_frames)
         
         # Square for energy
         filtered = filtered ** 2
-        
-        # Optional pooling (comment out if not needed)
-        # filtered = self.pooling(filtered)
         
         # Log compression
         output = torch.log(filtered + 1e-9)
@@ -341,9 +659,7 @@ class LEAFFrontend(nn.Module):
 
 
 class SincNetFrontend(nn.Module):
-    """
-    SincNet: Learnable sinc-based filters - FINAL FIXED VERSION
-    """
+    """SincNet: Learnable sinc-based filters"""
     def __init__(self, sample_rate=16000, n_filters=64, filter_length=251):
         super().__init__()
         
@@ -423,7 +739,6 @@ class SincNetFrontend(nn.Module):
         
         # Apply convolution
         filtered = F.conv1d(waveform, filters, stride=160, padding=self.filter_length//2)
-        # Output shape: (1, n_filters, time_frames)
         
         # Square for energy (consistent with other frontends)
         filtered = filtered ** 2
@@ -437,58 +752,12 @@ class SincNetFrontend(nn.Module):
         return output
 
 
-class PCENCompression(nn.Module):
-    """
-    Per-Channel Energy Normalization for LEAF
-    Learnable PCEN parameters
-    """
-    def __init__(self, n_channels, alpha=0.98, delta=2.0, r=0.5, s=0.025, eps=1e-6):
-        super().__init__()
-        
-        # Make PCEN parameters learnable
-        self.alpha = nn.Parameter(torch.ones(n_channels, 1) * alpha)
-        self.delta = nn.Parameter(torch.ones(n_channels, 1) * delta)
-        self.r = nn.Parameter(torch.ones(n_channels, 1) * r)
-        self.s = nn.Parameter(torch.ones(n_channels, 1) * s)
-        self.eps = eps
-        
-        # Ensure parameters stay in valid range
-        self.alpha_range = (0.5, 1.0)
-        self.delta_range = (0.5, 10.0)
-        self.r_range = (0.1, 1.0)
-        self.s_range = (0.001, 0.5)
-    
-    def forward(self, x):
-        # Constrain parameters
-        alpha = torch.clamp(self.alpha, *self.alpha_range)
-        delta = torch.clamp(self.delta, *self.delta_range)
-        r = torch.clamp(self.r, *self.r_range)
-        s = torch.clamp(self.s, *self.s_range)
-        
-        # Smooth energy estimate
-        smooth = torch.zeros_like(x)
-        smooth[:, :, 0] = x[:, :, 0] if x.dim() == 3 else x[:, 0]
-        
-        for t in range(1, x.shape[-1]):
-            if x.dim() == 3:
-                smooth[:, :, t] = (1 - s.squeeze()) * smooth[:, :, t-1] + s.squeeze() * x[:, :, t]
-            else:
-                smooth[:, t] = (1 - s.squeeze()) * smooth[:, t-1] + s.squeeze() * x[:, t]
-        
-        # Apply PCEN
-        if x.dim() == 3:
-            pcen = (x / (smooth + self.eps) ** alpha.squeeze() + delta.squeeze()) ** r.squeeze() - delta.squeeze() ** r.squeeze()
-        else:
-            pcen = (x / (smooth + self.eps) ** alpha.squeeze() + delta.squeeze()) ** r.squeeze() - delta.squeeze() ** r.squeeze()
-        
-        return pcen
-
-
 class MelFilterbank(nn.Module):
     """Mel-scale filterbank front-end"""
     def __init__(self, sample_rate=16000, n_fft=512, n_mels=40, hop_length=160):
         super().__init__()
         self.n_mels = n_mels
+        self.n_filters = n_mels  # Add this for compatibility
         self.mel_scale = torchaudio.transforms.MelSpectrogram(
             sample_rate=sample_rate,
             n_fft=n_fft,
@@ -500,6 +769,7 @@ class MelFilterbank(nn.Module):
         mel_spec = self.mel_scale(waveform)
         log_mel = torch.log(mel_spec + 1e-9)
         return log_mel
+
 
 class ERBFilterbank(nn.Module):
     """ERB-scale filterbank"""
@@ -552,6 +822,7 @@ class ERBFilterbank(nn.Module):
         erb_spec = torch.matmul(self.filterbank, magnitude)
         log_erb = torch.log(erb_spec + 1e-9)
         return log_erb
+
 
 class BarkFilterbank(nn.Module):
     """Bark-scale filterbank"""
@@ -608,6 +879,7 @@ class BarkFilterbank(nn.Module):
         log_bark = torch.log(bark_spec + 1e-9)
         return log_bark
 
+
 class CQTFrontend(nn.Module):
     """Constant-Q Transform frontend"""
     def __init__(self, sample_rate=16000, hop_length=160, n_bins=84):
@@ -615,6 +887,7 @@ class CQTFrontend(nn.Module):
         self.sample_rate = sample_rate
         self.hop_length = hop_length
         self.n_bins = n_bins
+        self.n_filters = n_bins  # Add for compatibility
         self.fmin = 50
     
     def forward(self, waveform):
@@ -629,6 +902,7 @@ class CQTFrontend(nn.Module):
         log_cqt = np.log(cqt_mag + 1e-9)
         
         return torch.FloatTensor(log_cqt)
+
 
 class PCEN(nn.Module):
     """Per-Channel Energy Normalization"""
@@ -661,11 +935,13 @@ class PCEN(nn.Module):
         
         return pcen
 
+
 class MelPCEN(nn.Module):
     """Mel + PCEN frontend"""
     def __init__(self, sample_rate=16000, n_fft=512, n_mels=40, hop_length=160):
         super().__init__()
         self.n_mels = n_mels
+        self.n_filters = n_mels  # Add for compatibility
         self.mel = MelFilterbank(sample_rate, n_fft, n_mels, hop_length)
         self.pcen = PCEN()
     
@@ -676,201 +952,18 @@ class MelPCEN(nn.Module):
         log_pcen = torch.log(pcen_spec + 1e-9)
         return log_pcen
 
-
-# ============== TRAINING FUNCTIONS ==============
-
-def load_music_data(data_dir='../ICASSP/data/music', max_per_genre=None):
-    """Load music classification data"""
-    print("Loading music data...")
-    
-    genres = ['arab_andalusian', 'carnatic', 'fma_small', 'gtzan', 
-              'hindustani', 'turkish_makam']
-    
-    file_paths = []
-    labels = []
-    
-    for genre_idx, genre in enumerate(genres):
-        genre_dir = Path(data_dir) / genre
-        if not genre_dir.exists():
-            print(f"  Warning: {genre} not found")
-            continue
-        
-        audio_files = list(genre_dir.glob('*.wav')) + list(genre_dir.glob('*.mp3'))
-        if max_per_genre:
-            audio_files = audio_files[:max_per_genre]
-        
-        print(f"  Found {len(audio_files)} files in {genre}")
-        
-        for audio_file in audio_files:
-            file_paths.append(str(audio_file))
-            labels.append(genre_idx)
-    
-    print(f"Total music files: {len(file_paths)}")
-    return file_paths, labels, len(genres)
-
-
-def load_scene_data(data_dir='../ICASSP/data/scenes', max_per_scene=None):
-    """Load scene classification data"""
-    print("Loading scene data...")
-    
-    scenes = ['european-1', 'european-2']
-    
-    file_paths = []
-    labels = []
-    
-    for scene_idx, scene in enumerate(scenes):
-        scene_dir = Path(data_dir) / scene
-        if not scene_dir.exists():
-            print(f"  Warning: {scene} not found")
-            continue
-        
-        audio_files = list(scene_dir.glob('*.wav'))
-        if max_per_scene:
-            audio_files = audio_files[:max_per_scene]
-        
-        print(f"  Found {len(audio_files)} files in {scene}")
-        
-        for audio_file in audio_files:
-            file_paths.append(str(audio_file))
-            labels.append(scene_idx)
-    
-    print(f"Total scene files: {len(file_paths)}")
-    return file_paths, labels, len(scenes)
-
-
-def load_speech_data(data_dir='../ICASSP/data/speech', max_per_language=None):
-    """Load speech data for language classification"""
-    print("Loading speech data...")
-    
-    languages = ['de', 'en', 'es', 'fr', 'it', 'nl', 'pa-IN', 'th', 'vi', 
-                 'yue', 'zh-CN']
-    
-    file_paths = []
-    labels = []
-    
-    for lang_idx, lang in enumerate(languages):
-        lang_dir = Path(data_dir) / lang
-        if not lang_dir.exists():
-            print(f"  Warning: {lang} not found")
-            continue
-        
-        audio_files = list(lang_dir.glob('*.wav'))
-        if max_per_language:
-            audio_files = audio_files[:max_per_language]
-        
-        print(f"  Found {len(audio_files)} files in {lang}")
-        
-        for audio_file in audio_files:
-            file_paths.append(str(audio_file))
-            labels.append(lang_idx)
-    
-    print(f"Total speech files: {len(file_paths)}")
-    return file_paths, labels, len(languages)
-
-
-def train_model(model, train_loader, val_loader, num_epochs=30, learning_rate=0.001, device='cuda'):
-    """Train a CRNN model"""
-    
-    # Loss and optimizer
-    criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=5, factor=0.5)
-    
-    # Move model to device
-    model = model.to(device)
-    
-    # Training history
-    history = {'train_loss': [], 'val_loss': [], 'val_acc': []}
-    best_val_acc = 0
-    best_model_state = None
-    
-    for epoch in range(num_epochs):
-        # Training phase
-        model.train()
-        train_loss = 0
-        train_correct = 0
-        train_total = 0
-        
-        pbar = tqdm(train_loader, desc=f'Epoch {epoch+1}/{num_epochs} [Train]')
-        for features, labels in pbar:
-            features = features.to(device)
-            labels = labels.to(device)
-            
-            # Forward pass
-            outputs = model(features)
-            loss = criterion(outputs, labels)
-            
-            # Backward pass
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-            
-            # Statistics
-            train_loss += loss.item()
-            _, predicted = torch.max(outputs.data, 1)
-            train_total += labels.size(0)
-            train_correct += (predicted == labels).sum().item()
-            
-            pbar.set_postfix({'loss': loss.item(), 
-                             'acc': train_correct/train_total})
-        
-        avg_train_loss = train_loss / len(train_loader)
-        train_acc = train_correct / train_total
-        
-        # Validation phase
-        model.eval()
-        val_loss = 0
-        val_correct = 0
-        val_total = 0
-        
-        with torch.no_grad():
-            for features, labels in tqdm(val_loader, desc=f'Epoch {epoch+1}/{num_epochs} [Val]'):
-                features = features.to(device)
-                labels = labels.to(device)
-                
-                outputs = model(features)
-                loss = criterion(outputs, labels)
-                
-                val_loss += loss.item()
-                _, predicted = torch.max(outputs.data, 1)
-                val_total += labels.size(0)
-                val_correct += (predicted == labels).sum().item()
-        
-        avg_val_loss = val_loss / len(val_loader)
-        val_acc = val_correct / val_total
-        
-        # Update learning rate
-        scheduler.step(avg_val_loss)
-        
-        # Save best model
-        if val_acc > best_val_acc:
-            best_val_acc = val_acc
-            best_model_state = model.state_dict().copy()
-        
-        # Update history
-        history['train_loss'].append(avg_train_loss)
-        history['val_loss'].append(avg_val_loss)
-        history['val_acc'].append(val_acc)
-        
-        print(f'Epoch {epoch+1}: Train Loss: {avg_train_loss:.4f}, '
-              f'Val Loss: {avg_val_loss:.4f}, Val Acc: {val_acc:.4f}')
-    
-    # Load best model
-    if best_model_state:
-        model.load_state_dict(best_model_state)
-    
-    return model, history, best_val_acc
+# ============== FRONTEND CONFIGURATIONS ==============
 
 def get_frontend_configs():
-    """Get all frontend configurations matching the paper specifications"""
+    """Frontend configurations matching paper specifications"""
     configs = {
-        'LEAF': {
-            'class': LEAFFrontend,
+        'SincNet': {
+            'class': SincNetFrontend,
             'params': {'n_filters': 64},
             'input_dim': 64
         },
-        'SincNet': {
-            'class': SincNetFrontend,
+        'LEAF': {
+            'class': LEAFFrontend,
             'params': {'n_filters': 64},
             'input_dim': 64
         },
@@ -902,145 +995,137 @@ def get_frontend_configs():
     }
     return configs
 
-def train_frontend_models(frontend_name, frontend_config, tasks_data, 
-                         batch_size=32, num_epochs=30, learning_rate=0.001, device='cuda'):
-    """Train models for a specific frontend across all tasks"""
-    
-    print(f"\n{'='*60}")
-    print(f"TRAINING MODELS FOR {frontend_name} FRONTEND")
-    print(f"{'='*60}")
-    
-    # Initialize frontend
-    frontend_class = frontend_config['class']
-    frontend_params = frontend_config['params']
-    input_dim = frontend_config['input_dim']
-    frontend = frontend_class(**frontend_params)
-    
-    print(f"Frontend: {frontend_name}")
-    print(f"Input dimension: {input_dim}")
-    
-    results = {}
-    
-    # Train model for each task
-    for task_name, (file_paths, labels, num_classes) in tasks_data.items():
-        if len(file_paths) == 0:
-            print(f"⚠️  No data for {task_name}, skipping...")
-            continue
-            
-        print(f"\n--- Training {task_name} model with {frontend_name} ---")
-        
-        # Split data
-        X_train, X_val, y_train, y_val = train_test_split(
-            file_paths, labels, test_size=0.2, random_state=42, stratify=labels
-        )
-        
-        print(f"Training samples: {len(X_train)}")
-        print(f"Validation samples: {len(X_val)}")
-        print(f"Classes: {num_classes}")
-        
-        # Determine max length based on task
-        max_length = 5 if task_name == 'speech' else 10
-        
-        # Create datasets
-        train_dataset = AudioDataset(X_train, y_train, frontend, max_length_seconds=max_length)
-        val_dataset = AudioDataset(X_val, y_val, frontend, max_length_seconds=max_length)
-        
-        # Create dataloaders
-        train_loader = DataLoader(train_dataset, batch_size=batch_size, 
-                                shuffle=True, num_workers=2)
-        val_loader = DataLoader(val_dataset, batch_size=batch_size, 
-                              shuffle=False, num_workers=2)
-        
-        # Create model with correct input dimension
-        model = CRNN(input_dim=input_dim, num_classes=num_classes)
-        
-        # Train model
-        model, history, best_acc = train_model(
-            model, train_loader, val_loader,
-            num_epochs=num_epochs, learning_rate=learning_rate, device=device
-        )
-        
-        # Save model with frontend-specific name
-        model_path = f'models/crnn_{task_name}_{frontend_name}.pth'
-        torch.save(model.state_dict(), model_path)
-        print(f"✓ Model saved: {model_path} (Best Acc: {best_acc:.4f})")
-        
-        # Save history
-        history_path = f'models/{task_name}_{frontend_name}_history.json'
-        with open(history_path, 'w') as f:
-            json.dump(history, f, indent=2)
-        
-        results[task_name] = {
-            'best_acc': best_acc,
-            'model_path': model_path
-        }
-    
-    return results
+# ============== MAIN TRAINING ORCHESTRATOR ==============
 
 def main():
     print("="*60)
-    print("TRAINING FRONTEND-SPECIFIC CRNN MODELS")
-    print("Matching Paper Specifications")
+    print("MULTI-GPU OPTIMIZED TRAINING")
+    print("ICASSP Paper Implementation")
     print("="*60)
     
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"\nUsing device: {device}")
+    # Get number of GPUs
+    world_size = torch.cuda.device_count()
+    print(f"\nDetected {world_size} GPUs")
     
-    # Create models directory
-    os.makedirs('models', exist_ok=True)
+    if world_size == 0:
+        print("No GPUs found! Please run on a GPU machine.")
+        return
     
-    # Load all task data first
+    # Check GPU memory status
+    print("\nGPU Memory Status:")
+    for i in range(world_size):
+        torch.cuda.set_device(i)
+        allocated = torch.cuda.memory_allocated(i) / 1024**3
+        reserved = torch.cuda.memory_reserved(i) / 1024**3
+        total = torch.cuda.get_device_properties(i).total_memory / 1024**3
+        print(f"  GPU {i}: {allocated:.2f}/{reserved:.2f}/{total:.2f} GB (allocated/reserved/total)")
+        
+        # Clear cache
+        torch.cuda.empty_cache()
+    
+    # Training configuration
+    num_epochs = 30
+    
+    # Adjust batch size based on GPU count - don't scale linearly for large GPU counts
+    if world_size <= 2:
+        batch_size_per_gpu = 32
+    elif world_size <= 4:
+        batch_size_per_gpu = 16
+    else:
+        batch_size_per_gpu = 8  # For 5+ GPUs, use smaller batch size
+    
+    batch_size = batch_size_per_gpu  # This is per GPU, DataLoader handles distribution
+    max_samples = None  # Use all available data
+    
+    print(f"Batch size per GPU: {batch_size}")
+    print(f"Total effective batch size: {batch_size * world_size}")
+    
+    # If memory issues, suggest using fewer GPUs
+    if world_size > 4:
+        print(f"\n  WARNING: Using {world_size} GPUs may cause memory issues.")
+        print("   Consider using fewer GPUs by setting CUDA_VISIBLE_DEVICES")
+        print(f"   Example: CUDA_VISIBLE_DEVICES=0,1,2,3 python {__file__}")
+    
+    # Load all datasets
     print("\n1. Loading all datasets...")
     print("-"*40)
     
     tasks_data = {}
     
-    # Load music data
-    file_paths, labels, num_classes = load_music_data(max_per_genre=500)  # Reduced for faster training
+    # Music task (6 genre collections as per paper)
+    file_paths, labels, num_classes = load_music_data(
+        max_per_genre=max_samples
+    )
     if len(file_paths) > 0:
         tasks_data['music'] = (file_paths, labels, num_classes)
     
-    # Load scene data  
-    file_paths, labels, num_classes = load_scene_data(max_per_scene=500)
+    # Scene task (2 groups: european-1 and european-2)
+    file_paths, labels, num_classes = load_scene_data(
+        max_per_scene=max_samples
+    )
     if len(file_paths) > 0:
         tasks_data['scene'] = (file_paths, labels, num_classes)
     
-    # Load speech data
-    file_paths, labels, num_classes = load_speech_data(max_per_language=500)
+    # Speech task (11 languages as per paper)
+    file_paths, labels, num_classes = load_speech_data(
+        max_per_language=max_samples
+    )
     if len(file_paths) > 0:
         tasks_data['speech'] = (file_paths, labels, num_classes)
     
     # Get frontend configurations
     frontend_configs = get_frontend_configs()
     
-    # Training parameters
-    batch_size = 32
-    num_epochs = 30
-    learning_rate = 0.001
-    
-    # Train models for each frontend
-    print("\n2. Training models for each frontend...")
+    # Train models for each frontend and task
+    print("\n2. Training models (Multi-GPU)...")
     print("-"*40)
     
     all_results = {}
     
     for frontend_name, frontend_config in frontend_configs.items():
-        results = train_frontend_models(
-            frontend_name, 
-            frontend_config, 
-            tasks_data,
-            batch_size=batch_size,
-            num_epochs=num_epochs,
-            learning_rate=learning_rate,
-            device=device
-        )
-        all_results[frontend_name] = results
+        print(f"\n{'='*60}")
+        print(f"TRAINING {frontend_name} FRONTEND")
+        print(f"{'='*60}")
+        
+        frontend_results = {}
+        
+        for task_name, task_data in tasks_data.items():
+            if len(task_data[0]) == 0:
+                print(f"Skipping {task_name} - no data")
+                continue
+            
+            # Launch distributed training
+            print(f"\nLaunching {world_size}-GPU training for {task_name}")
+            
+            # For single-node multi-GPU, we use spawn
+            if world_size > 1:
+                mp.spawn(train_model_ddp,
+                        args=(world_size, frontend_name, frontend_config,
+                              task_name, task_data, num_epochs, batch_size),
+                        nprocs=world_size,
+                        join=True)
+            else:
+                # Single GPU fallback
+                best_acc = train_model_ddp(0, 1, frontend_name, frontend_config,
+                                          task_name, task_data, num_epochs, batch_size)
+            
+            # Load result from saved file
+            history_path = f'models/{task_name}_{frontend_name}_history.json'
+            if os.path.exists(history_path):
+                with open(history_path, 'r') as f:
+                    history = json.load(f)
+                    frontend_results[task_name] = {
+                        'best_acc': history['best_val_acc'],
+                        'model_path': f'models/crnn_{task_name}_{frontend_name}.pth'
+                    }
+        
+        all_results[frontend_name] = frontend_results
     
-    # Save summary
+    # Save comprehensive summary
     with open('models/training_summary.json', 'w') as f:
         json.dump(all_results, f, indent=2)
     
-    # Print summary
+    # Print final summary
     print("\n" + "="*60)
     print("TRAINING COMPLETE - SUMMARY")
     print("="*60)
@@ -1050,9 +1135,12 @@ def main():
         for task_name, task_results in results.items():
             print(f"  {task_name}: Acc={task_results['best_acc']:.4f}")
     
-    print("\nAll models saved in 'models/' directory")
-    print("Model naming convention: crnn_[task]_[frontend].pth")
-    print("\nReady for evaluation with run_experiments.py")
+    print("\n All models saved in 'models/' directory")
 
 if __name__ == "__main__":
+    # Set environment variables for better performance
+    os.environ['OMP_NUM_THREADS'] = '4'
+    os.environ['MKL_NUM_THREADS'] = '4'
+    os.environ['CUDA_LAUNCH_BLOCKING'] = '0'
+    
     main()
